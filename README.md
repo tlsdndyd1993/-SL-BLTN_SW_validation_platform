@@ -1,4 +1,4 @@
-단품 수동 평가 환경 업무 활성화용 플랫폼 프로그램
+단품 수동 평가 환경 업무 활성화용 플랫폼 프로그램 (26.03.02 ~ 현재)
 
 
 [목적]
@@ -9,6 +9,7 @@
 
    
 2. Display / Web CAM 출력 화면을 동시에 Recording -> CAN Graph + 실물 동작성 동시 확인하여 증적 자료 생성
+   
    <img width="1898" height="1023" alt="image" src="https://github.com/user-attachments/assets/2647d63e-1e9a-44f9-afd0-fde7892894df" />
 
    
@@ -17,4 +18,14 @@
    -> 전원 제어       : PC <---(UART)---> Atmega328p <--(전자식 릴레이)--> BLTN 제어기
 
    -> CAN 신호 Read   : PC <--(Vector XL driver) --> CANoe VN1640A
+
+   -> 커널            : 프로그램 내 기능(녹화/수동녹화/전원제어/블랙아웃/ROI 등)에 대한 API 설정 및 실행을 스크립트 형식으로 제어 가능
+
+   -> AI Chat        : 대화 형식으로 기능 API의 설정 및 실행을 할 수 있고, 스크립트를 자동 생성 하게끔 함.
+
+   <img width="684" height="755" alt="image" src="https://github.com/user-attachments/assets/b6e7257f-b3e7-4e17-ac31-95080f3b2629" />
+
    
+
+
+
