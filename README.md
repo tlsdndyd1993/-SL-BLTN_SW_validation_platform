@@ -21,11 +21,14 @@
 
    -> AI Chat        : 대화 형식으로 기능 API의 설정 및 실행을 할 수 있고, 스크립트를 자동 생성 하게끔 함.
 
+
  <img width="1440" height="1595" alt="image" src="https://github.com/user-attachments/assets/34f2f1e2-ec66-4d48-a0e4-09349d5947f8" />
+
 
    -> 커널            : 프로그램 내 기능(녹화/수동녹화/전원제어/블랙아웃/ROI 등)에 대한 API 설정 및 실행을 스크립트 형식으로 제어 가능
 
-<img width="3831" height="2079" alt="image" src="https://github.com/user-attachments/assets/1b57ec59-ea14-440b-b2ad-a7d32585f3bb" />
+
+<img width="3823" height="2077" alt="image" src="https://github.com/user-attachments/assets/71d5e8c7-7087-4380-8557-9a25d5919868" />
 
 
 
