@@ -27,6 +27,7 @@
 
    -> 커널            : 프로그램 내 기능(녹화/수동녹화/전원제어/블랙아웃/ROI 등)에 대한 API 설정 및 실행을 스크립트 형식으로 제어 가능
 
+<img width="950" height="1190" alt="image" src="https://github.com/user-attachments/assets/b23f4e07-a16c-4ff9-a2f9-ac36040419fc" />
 
 <img width="3823" height="2077" alt="image" src="https://github.com/user-attachments/assets/71d5e8c7-7087-4380-8557-9a25d5919868" />
 
