@@ -31,7 +31,7 @@
    
    <img width="1898" height="1023" alt="image" src="https://github.com/user-attachments/assets/2647d63e-1e9a-44f9-afd0-fde7892894df" />
 -  
-3. PC환경에서 동작 천이 Aging 테스트 (CAN 신호 Read & 전원제어 & PASS|FAIL 판별 & 녹화)
+3. PC환경에서 동작 천이 Aging 테스트 (CAN 신호 Read & 전원제어 & PASS|FAIL 자동 판별 & 녹화)
    
    -> 전원 제어       : **PC** <---(UART)---> Atmega328p <--(전자식 릴레이)--> **BLTN 제어기**
 
