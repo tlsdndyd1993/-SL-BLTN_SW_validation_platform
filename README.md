@@ -109,7 +109,7 @@
 **[참고 이미지 : Aging 테스트 관련 Ai chat 사용 -> 커널 스크립트 반영]**
 -
 
-[AI CHAT] : 요청 -> 응답 ( 프로그램 목적 & API 역할에 대해 상세 추가 학습 필요.. 미완성 )
+[AI CHAT] : 요청 -> 응답 ( 프로그램 목적 & API 역할에 대해 상세 정의 필요.. 현재 미완성 )
  <img width="1440" height="1595" alt="image" src="https://github.com/user-attachments/assets/34f2f1e2-ec66-4d48-a0e4-09349d5947f8" />
 
 
