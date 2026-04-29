@@ -34,17 +34,17 @@
 -
 -
 -
-[AI CHAT]
+[AI CHAT] : 요청 -> 응답
  <img width="1440" height="1595" alt="image" src="https://github.com/user-attachments/assets/34f2f1e2-ec66-4d48-a0e4-09349d5947f8" />
 
 
 
-[커널]
+[커널] : BLTN 상태 파악 -> 프로그램 제어
 <img width="950" height="1190" alt="image" src="https://github.com/user-attachments/assets/b23f4e07-a16c-4ff9-a2f9-ac36040419fc" />
 <img width="3823" height="2077" alt="image" src="https://github.com/user-attachments/assets/71d5e8c7-7087-4380-8557-9a25d5919868" />
 
 
-[CAN Graph]
+[CAN Graph] : CAN BUS 내 시그널 참고
 <img width="1587" height="1189" alt="image" src="https://github.com/user-attachments/assets/70037f25-7cfb-4076-8bab-a53f79c70259" />
 
 
