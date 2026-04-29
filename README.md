@@ -22,7 +22,7 @@
 -  
 3. PC환경에서 동작 천이 Aging 테스트 (CAN 신호 Read & 전원제어 & PASS|FAIL 판별 & 녹화)
    
-   -> 전원 제어       : PC <---(UART)---> Atmega328p <--(전자식 릴레이)--> BLTN 제어기
+   -> 전원 제어       : **PC** <---(UART)---> Atmega328p <--(전자식 릴레이)--> **BLTN 제어기**
 
    -> CAN 신호 Read   : PC <--(Vector XL driver) --> CANoe VN1640A
 
