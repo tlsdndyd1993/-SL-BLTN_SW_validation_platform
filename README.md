@@ -116,6 +116,10 @@
 [AI CHAT] : 요청 -> 응답 ( 프로그램 목적 & API 역할에 대해 상세 정의 필요.. 현재 90%정도 완성 )
  <img width="1440" height="1595" alt="image" src="https://github.com/user-attachments/assets/34f2f1e2-ec66-4d48-a0e4-09349d5947f8" />
 
+<img width="1379" height="2082" alt="image" src="https://github.com/user-attachments/assets/6db01fdb-ff24-4679-abe2-b0b833eddca5" />
+
+-
+
 
 -
 [커널] : BLTN 상태 파악 -> 프로그램 제어
