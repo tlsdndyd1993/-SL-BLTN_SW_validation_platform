@@ -21,7 +21,9 @@
 -
 (첨부파일)
 
--> 플랫폼 프로그램(=platform1.32.py)    &    Atmega328p아두이노 프로그램(=sketch_apr12a.ino)
+-> 플랫폼 프로그램(=platform1.32.py)
+
+-> Atmega328p아두이노 프로그램(=sketch_apr12a.ino)
 
 **[목적]**
 -
