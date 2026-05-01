@@ -109,8 +109,7 @@
 **[참고 이미지 : 자동화 반복 테스트 관련 Ai chat 사용 -> 커널 스크립트 반영]**
 -
 
-[AI CHAT] : 요청 -> 응답 ( 프로그램 목적 & API 역할에 대해 상세 정의 필요.. 현재 90%정도 완성 )
- <img width="1440" height="1595" alt="image" src="https://github.com/user-attachments/assets/34f2f1e2-ec66-4d48-a0e4-09349d5947f8" />
+[AI CHAT] : 요청 -> 응답
 
 <img width="1379" height="2082" alt="image" src="https://github.com/user-attachments/assets/6db01fdb-ff24-4679-abe2-b0b833eddca5" />
 
