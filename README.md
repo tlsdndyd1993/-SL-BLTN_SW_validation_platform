@@ -23,27 +23,23 @@
 
 **[목적]**
 -
-1. '녹화/수동녹화/캡쳐' 기능을 통한 증적 자료 생성
+1. '녹화/수동녹화/캡쳐' 기능을 통한 증적 자료 생성하기 위함
    
    -> 평가 시작과 동시에 Recording, 평가 완료시 녹화 종료하여 증적 자료 바로 생성.
--
-2. Display / Web CAM 출력 화면을 동시에 Recording -> CAN Graph + 실물 동작성 동시 확인하여 증적 자료 신뢰성 향상.
+   -> Display / Web CAM 출력 화면을 동시에 Recording -> CAN Graph + 실물 동작성 동시 확인하여 증적 자료 신뢰성 향상.
    
    <img width="1898" height="1023" alt="image" src="https://github.com/user-attachments/assets/2647d63e-1e9a-44f9-afd0-fde7892894df" />
 -  
-3. PC환경에서 동작 천이 Aging 테스트 (CAN 신호 Read & 전원제어 & PASS|FAIL 자동 판별 & 녹화)
+2. PC환경에서 테스트케이스 기반 동작 천이 자동 반복 테스트 (CAN 신호 Read & 전원제어 & PASS|FAIL 자동 판별 & 녹화)
    
    -> 전원 제어       : **PC** <---(UART)---> Atmega328p <--(전자식 릴레이)--> **BLTN 제어기**
 
    -> CAN 신호 Read   : PC <--(Vector XL driver) --> CANoe VN1640A
 
-   -> AI Chat        : 대화 형식으로 각 기능에 대한 설정값 반영 & 기능 실행을 할 수 있고, T/C 스크립트를 자동 생성 하게끔 함.
+   -> AI Chat        : 대화 형식으로 기능들에 대한 설정값 반영 & 실행, 요청에 따라 T/C 스크립트 자동 생성.
    
-   -> 커널            : 프로그램 내 기능(녹화/수동녹화/전원제어/블랙아웃/ROI 등)에 대한 API 설정 및 실행을 스크립트 형식으로 제어 가능-
+   -> 커널            : 프로그램 내 기능(녹화/수동녹화/전원제어/블랙아웃/ROI 등)API의 파라메터 설정 및 실행을 스크립트 형식으로 제어.
 -
-4. 자동화 T/C를 PC 환경에서 HILS와 병렬로 진행
--
-5. Script 개발 허들 낮추기, 생산성 향상 시키기.
 -
 
 **[환경 세팅]**
