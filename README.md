@@ -14,7 +14,7 @@
 2. Web CAM
 3. VECTOR CANoe 1640A
 4. 아두이노 우노 & 택트스위치 4ea & 빵판 & 전자식 릴레이 & wire & 아두이노 USB
-5. 검증 대상 제어기(BLTN)
+5. 검증 대상 제어기(BLTN) & 주변 환경(CCU / HU / Display / PLBM...)
 -
 
 
