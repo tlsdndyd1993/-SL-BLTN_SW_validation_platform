@@ -138,7 +138,7 @@
 [AI CHAT] : 요청 -> 응답
 
 
-[커널] : BLTN 상태 파악 -> 프로그램 제어
+[커널] : 스크립트(from AI Chat) -> 커널에서 프로그램 제어
 
 (커널 명령에 따라 녹화중...)
 <img width="3823" height="2077" alt="image" src="https://github.com/user-attachments/assets/71d5e8c7-7087-4380-8557-9a25d5919868" />
