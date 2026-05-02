@@ -10,14 +10,14 @@
 -
 **[목적]**
 -
-1. 평가 시, '녹화/수동녹화/캡쳐' 기능을 통한 증적 자료 자동 생성.
+**1. 평가 시, '녹화/수동녹화/캡쳐' 기능을 통한 증적 자료 자동 생성.**
    
    -> 평가 시작과 동시에 Recording, 평가 완료시 녹화 종료하여 증적 자료 바로 생성.
    -> Display / Web CAM 출력 화면을 동시에 Recording -> CAN Graph + 실물 동작성 동시 확인하여 증적 자료 신뢰성 향상.
    
    <img width="1898" height="1023" alt="image" src="https://github.com/user-attachments/assets/2647d63e-1e9a-44f9-afd0-fde7892894df" />
 -  
-2. PC환경에서 테스트케이스 기반 동작 천이 자동 반복 테스트 (CAN 신호 Read & 전원제어 & PASS|FAIL 자동 판별 & 녹화)
+**2. PC환경에서 테스트케이스 기반 동작 천이 자동 반복 테스트 (CAN 신호 Read & 전원제어 & PASS|FAIL 자동 판별 & 녹화)**
    
    -> 전원 제어       : **PC** <---(UART)---> Atmega328p <--(전자식 릴레이)--> **BLTN 제어기**
 
@@ -29,6 +29,8 @@
 
    <img width="1379" height="2082" alt="image" src="https://github.com/user-attachments/assets/6db01fdb-ff24-4679-abe2-b0b833eddca5" />
 -
+(커널 명령에 따라 녹화중...)
+<img width="3823" height="2077" alt="image" src="https://github.com/user-attachments/assets/71d5e8c7-7087-4380-8557-9a25d5919868" />
 -
 
 **[환경 세팅]**
@@ -140,8 +142,7 @@
 
 [커널] : 스크립트(from AI Chat) -> 커널에서 프로그램 제어
 
-(커널 명령에 따라 녹화중...)
-<img width="3823" height="2077" alt="image" src="https://github.com/user-attachments/assets/71d5e8c7-7087-4380-8557-9a25d5919868" />
+
 
 -
 [CAN Graph] : CAN BUS 내 시그널 참고
