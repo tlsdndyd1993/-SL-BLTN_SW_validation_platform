@@ -134,7 +134,7 @@
 
 -
 [커널] : BLTN 상태 파악 -> 프로그램 제어
-<img width="950" height="1190" alt="image" src="https://github.com/user-attachments/assets/b23f4e07-a16c-4ff9-a2f9-ac36040419fc" />
+
 (커널 명령에 따라 녹화중...)
 <img width="3823" height="2077" alt="image" src="https://github.com/user-attachments/assets/71d5e8c7-7087-4380-8557-9a25d5919868" />
 
