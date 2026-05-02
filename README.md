@@ -20,6 +20,8 @@
    -> AI Chat        : 대화 형식으로 기능들에 대한 설정값 반영 & 실행, 요청에 따라 T/C 스크립트 자동 생성.
    
    -> 커널            : 프로그램 내 기능(녹화/수동녹화/전원제어/블랙아웃/ROI 등)API의 파라메터 설정 및 실행을 스크립트 형식으로 제어.
+
+   <img width="1379" height="2082" alt="image" src="https://github.com/user-attachments/assets/6db01fdb-ff24-4679-abe2-b0b833eddca5" />
 -
 -
 
@@ -90,6 +92,8 @@
 -
 [오토클릭]
 1. PC 비활성화 방지 목적으로 클릭 이벤트 자동 반영
+-
+-
 
 **[참고]**
 -
@@ -131,7 +135,7 @@
 
 [AI CHAT] : 요청 -> 응답
 
-<img width="1379" height="2082" alt="image" src="https://github.com/user-attachments/assets/6db01fdb-ff24-4679-abe2-b0b833eddca5" />
+
 
 -
 
