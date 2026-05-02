@@ -7,6 +7,16 @@
 
 -> Atmega328p아두이노 프로그램(=sketch_apr12a.ino)
 
+
+**[환경 세팅]**
+-
+1. PC
+2. Web CAM
+3. VECTOR CANoe 1640A
+4. 아두이노 우노 & 택트스위치 4ea & 빵판 & 전자식 릴레이 & wire & 아두이노 USB
+5. 검증 대상 제어기(BLTN)
+-
+
 -
 **[목적]**
 -
@@ -34,14 +44,6 @@
 <img width="3823" height="2077" alt="image" src="https://github.com/user-attachments/assets/71d5e8c7-7087-4380-8557-9a25d5919868" />
 -
 
-**[환경 세팅]**
--
-1. PC
-2. Web CAM
-3. VECTOR CANoe 1640A
-4. 아두이노 우노 & 택트스위치 4ea & 빵판 & 전자식 릴레이 & wire & 아두이노 USB
-5. 검증 대상 제어기(BLTN)
--
 -
 
 **[기능]**
