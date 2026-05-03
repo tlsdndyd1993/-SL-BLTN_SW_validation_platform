@@ -164,6 +164,9 @@
   3. 타이머 기능 추가
   4. 전원 제어 기능 UI개선
   5. CAN Graph 기능 프로세스 병목현상 완화 (Graph 기능 축소)
+  6. Atmega328p 전원제어 기능 추가(PLBM)
+  7. Atmega328p OHCL 스위치 인터페이스 추가(택트스위치 & 프로그램 UI)
+  8. Atmega328p OHCL 점멸 주기를 프로그램 UI로 확인가능하게끔 개선
       
 
 <img width="1199" height="849" alt="image" src="https://github.com/user-attachments/assets/6984a4b4-8405-43f7-92f7-43ee1c4ed0fd" />
