@@ -157,7 +157,16 @@
 -
 **[수정 내용]**
 - 26.05.03)
+  1. AI Chat 기능에서 심어진 LLM 종류 관계 없이, 지속 학습이 가능한 SW 구조 반영
+     
+     -> (AI 메모리 구조 반영 : Layer 1~3 으로 구분 (Layer 1 : 장기 기억 / Layer 2 : 실시간 상황  /  Layer 3 : 단기 히스토리(최근 6턴만 기억)  -> 토근 체크(2500 토근 이상 : 응답느릴 수 있음 / 3000토근 이상 : layer 3 자동 초기화)
+  2. AI Chat 기능 UI 개선
+  3. 타이머 기능 추가
+  4. 전원 제어 기능 UI개선
+  5. CAN Graph 기능 프로세스 병목현상 완화 (Graph 기능 축소)
+      
 
-<img width="1434" height="872" alt="image" src="https://github.com/user-attachments/assets/d30c80d3-8d30-40f9-b265-de854fa46c15" />
+<img width="1199" height="849" alt="image" src="https://github.com/user-attachments/assets/6984a4b4-8405-43f7-92f7-43ee1c4ed0fd" />
+
 
 
