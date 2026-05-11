@@ -1,38 +1,44 @@
 # -*- coding: utf-8 -*-
 """
-Screen & Camera Recorder  v4.4
+Screen & Camera Recorder  v4.7
 ────────────────────────────────────────────────────────────────────────────
-v2.8 → v2.9 수정/추가사항
+v4.6 → v4.7 수정사항
 
-  [추가1] KernelEngine — 내장 Python 인터프리터 기반 조건부 자동화 커널
-    · KernelScript : 슬롯별 파이썬 스크립트 (반복/활성화 설정)
-    · KernelEngine : 스크립트 순서 실행, ROI값 읽기, TC결과 설정, OCR
-    · KernelPanel  : 드래그앤드랍 슬롯 관리, 에디터, import/export .py
-    · 전역 API : engine(CoreEngine), kernel(KernelEngine), log()
-    · ROI 밝기 감시, 조건부 Recording/수동녹화/캡처 자동화 가능
+  [문제1 수정] 아두이노 RX LED 계속 깜빡힘
+    · 원인: _poll_rx()가 100ms마다 PowerController.read()를 호출하나
+            read()는 항상 빈 문자열을 반환하는 stub임.
+            실제 수신은 _rx_loop 스레드가 처리하므로 _poll_rx 내 read() 호출 자체가
+            불필요하며, 더 중요하게는 _rx_loop의 blocking read(1)이
+            in_waiting=0일 때 timeout(0.1s)마다 Arduino에 불필요한 wake를 주어
+            RX LED 깜빡임의 원인이 됐음.
+    · 수정: _rx_loop에서 in_waiting==0이면 즉시 sleep(0.02) 후 continue.
+            blocking read(1) 제거 → Arduino RX LED 불필요 자극 차단.
+            _poll_rx는 로그 표시 전용으로만 유지 (read() 호출 제거).
 
-  [추가2] ApiDocDialog — 커널 API 레퍼런스 모달
-    · Control Panel 우측 상단 📖 API Doc 버튼으로 접근
-    · 전체 함수 서명, 파라미터, 예시 코드 포함
+  [문제2 수정] 프로그램 실행 즉시 crash (아무것도 안 뜨고 종료)
+    · 원인(v4.6 잘못된 수정): cv2/numpy/mss를 try/except optional로 바꿔서
+            np=None 상태에서 CoreEngine.__init__의 np.zeros(3) 호출 →
+            AttributeError: NoneType.zeros → 즉시 종료
+    · 수정: bare import 복원. 미설치 시 tkinter 다이얼로그로
+            "pip install ..." 안내 후 정상 종료 처리
 
-  [수정1] TC 중복 검증 처리 (_apply_tc_result_to_folder)
-    · 동일 결과(PASS→PASS / FAIL→FAIL) : 기존 폴더 재사용 (같은 폴더에 계속 저장)
-    · 다른 결과(PASS→FAIL / FAIL→PASS) : 새 폴더 분리 (suffix 자동 증가)
-    · 태그 없는 폴더 : 기존처럼 태그 삽입
+  [문제3 수정] UI에서 PLBM 실물 릴레이 OFF → TG B+ 도 함께 꺼지고 PLBM은 바로 ON
+    · 근본 원인: PowerControlPanel._build()에서 QComboBox.setCurrentText() 호출 시
+                 currentTextChanged 시그널이 즉시 발화 → _on_pin_changed() 호출
+                 → PowerController.CHANNELS 딕셔너리 오염.
+                 예) tg_bplus 기본핀 "5" → CHANNELS["tg_bplus"] = ("5","T")
+                 PLBM_REAL의 ON 명령 "5"와 tg_bplus ON 명령이 동일해져 충돌.
+    · 수정: QComboBox 생성 시 시그널 연결을 blockSignals(True/False)로 보호.
+            핀 셀렉트박스는 UI 표시 전용으로만 사용하고
+            CHANNELS 명령은 PowerController 클래스 내 CHANNELS 상수를 그대로 사용.
+            _on_pin_changed에서 CHANNELS를 직접 건드리지 않도록 수정.
 
-  [v2.8 변경사항 유지]
-    · RoiItem 데이터클래스 + RoiManagerPanel (드래그앤드랍, 팝업 편집)
-    · show_tc_dialog() 공용 함수 — Recording/블랙아웃/캡처 모두 표시
-    · use_custom_path_* 완전 삭제 → TC ON/OFF로 경로 자동 결정
-    · TC-ID 번호형식: QButtonGroup+QRadioButton (개별|범위)
-    · 범위 끝번호 ≥ 시작번호+1 강제
-    · (PASS)|(FAIL) 반영 할 폴더 텍스트
-    · IoChannelDB + MCP/REST/IPC 외부제어 서버
-────────────────────────────────────────────────────────────────────────────
-요구사항:
-  pip install PyQt5 opencv-python numpy mss Pillow pynput
-  (선택) pip install fastapi uvicorn   ← AI/외부제어 REST API
-  (선택) pip install pytesseract       ← 커널 OCR 기능
+  [문제4 수정] 아두이노 PLBM 모사 스위치(D6) 누를 때 플랫폼 UI 반응 없음
+    · 원인: 문제3에서 CHANNELS 오염 → send("Z")가 엉뚱한 명령으로 날아가거나
+            _parse_state_byte 이후 _fire_state_change가 제대로 동작 못함.
+    · 추가 원인: _rx_loop에서 SW 수신 후 send("Z") 전송 시 _lock 경합 가능성.
+    · 수정: CHANNELS 오염 수정으로 근본 해결.
+            send("Z")를 별도 큐(deque)로 비동기 처리해 _lock 경합 방지.
 """
 import sys, os, threading, time, queue, platform, subprocess, sqlite3, json, re
 from datetime import datetime
@@ -40,12 +46,44 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
-# ── 서드파티 ─────────────────────────────────────────────────────────────────
-import cv2
-try: cv2.setLogLevel(0)  # OpenCV 로그 레벨 0=SILENT
-except Exception: pass
-import numpy as np
-import mss
+# ── 서드파티 (필수 의존성) ────────────────────────────────────────────────────
+# cv2 / numpy / mss 는 필수. 미설치 시 즉시 안내 메시지 후 종료.
+# [v4.6 변경 롤백] try/except로 optional 처리했으나 np=None 상태에서
+# CoreEngine.__init__의 np.zeros(3) 등이 AttributeError로 crash 발생.
+# → 다시 bare import로 복원하되, ImportError 시 명확한 안내 메시지 출력.
+_MISSING = []
+try:
+    import cv2
+    try: cv2.setLogLevel(0)
+    except Exception: pass
+except ImportError:
+    _MISSING.append("opencv-python")
+
+try:
+    import numpy as np
+except ImportError:
+    _MISSING.append("numpy")
+    np = None  # type: ignore  (이후 코드에서 np=None 체크는 불필요 — 아래서 종료)
+
+try:
+    import mss as _mss_lib
+except ImportError:
+    _MISSING.append("mss")
+    _mss_lib = None  # type: ignore
+
+if _MISSING:
+    # GUI 없이도 메시지 표시 후 종료
+    _msg = ("필수 라이브러리가 설치되지 않았습니다:\n\n"
+            + "\n".join(f"  pip install {p}" for p in _MISSING)
+            + "\n\n위 명령어를 실행한 후 다시 시작하세요.")
+    try:
+        import tkinter as _tk, tkinter.messagebox as _mb
+        _r = _tk.Tk(); _r.withdraw()
+        _mb.showerror("Screen & Camera Recorder — 시작 실패", _msg)
+        _r.destroy()
+    except Exception:
+        print(_msg)
+    import sys as _sys; _sys.exit(1)
 
 try:
     from PIL import Image as _PIL_Image, ImageDraw as _PIL_Draw, ImageFont as _PIL_Font
@@ -65,6 +103,19 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import (Qt, QTimer, pyqtSignal, QObject, QPoint,
                            QRect, QDateTime)
 from PyQt5.QtGui import QImage, QPixmap, QColor, QPainter, QPen, QTextCursor
+
+
+class ClickLabel(QLabel):
+    """클릭 가능한 QLabel. QPushButton hover 오버라이드 문제 우회."""
+    clicked = pyqtSignal()
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setAlignment(Qt.AlignCenter)
+        self.setCursor(Qt.PointingHandCursor)
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(ev)
 
 try:
     from pynput import keyboard as pynput_keyboard, mouse as pynput_mouse
@@ -179,6 +230,9 @@ class RoiItem:
 
     # ── 조건값 (저장됨) ──────────────────────────────────────────────────
     cond_value: str = ""           # 사용자가 설정한 비교값 (예: "2", "OK")
+    roi_no_rec_enabled: bool = False   # [문제3] NO 판정 시 자동녹화 ON/OFF
+    # 런타임 카운트 (저장 안 함 — 세션마다 초기화)
+    no_match_count: int = 0            # MATCH→NO 전환 횟수 카운트
 
     def rect(self):
         return (self.x, self.y, self.w, self.h)
@@ -189,6 +243,7 @@ class RoiItem:
             "name": self.name, "description": self.description,
             "source": self.source,
             "cond_value": self.cond_value,
+            "roi_no_rec_enabled": self.roi_no_rec_enabled,
         }
 
     @classmethod
@@ -199,6 +254,7 @@ class RoiItem:
             name=d.get("name", ""), description=d.get("description", ""),
             source=d.get("source", "screen"),
             cond_value=d.get("cond_value", ""),
+            roi_no_rec_enabled=d.get("roi_no_rec_enabled", False),
         )
 
     def label(self) -> str:
@@ -280,12 +336,29 @@ def _find_unicode_font(size: int = 18):
 
 
 def _get_font(size: int = 18):
+    """
+    지정 크기의 한글 폰트 반환.
+    캐시에 없으면 가장 가까운 크기의 폰트로 fallback하거나
+    해당 크기를 즉시 로드.
+    """
     with _FONT_LOCK:
-        return _FONT_CACHE.get(size, None)
+        fnt = _FONT_CACHE.get(size, None)
+        if fnt is not None:
+            return fnt
+        # 캐시에 없는 크기 → 가장 가까운 캐시 크기 사용
+        if _FONT_CACHE:
+            best_sz = min(_FONT_CACHE.keys(), key=lambda k: abs(k - size))
+            return _FONT_CACHE.get(best_sz, None)
+    # 캐시 자체가 비어있으면 즉시 로드 시도 (드문 경우)
+    fnt = _find_unicode_font(size)
+    with _FONT_LOCK:
+        _FONT_CACHE[size] = fnt
+    return fnt
 
 
 def _preload_fonts():
-    for sz in (18, 14, 20, 24):
+    # [문제1 수정] 한글이 깨지는 문제: 모든 자주 쓰이는 크기를 미리 로드
+    for sz in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 28, 30, 32, 36):
         fnt = _find_unicode_font(sz)
         with _FONT_LOCK:
             _FONT_CACHE[sz] = fnt
@@ -620,11 +693,17 @@ class SettingsDB:
     def save_roi_items(self, items: List[RoiItem]):
         with self._lock:
             with self._conn() as c:
+                # 컬럼 추가 마이그레이션 (roi_no_rec_enabled)
+                try:
+                    c.execute("ALTER TABLE roi_items ADD COLUMN roi_no_rec_enabled INTEGER DEFAULT 0")
+                except Exception:
+                    pass
                 c.execute("DELETE FROM roi_items")
                 c.executemany(
-                    "INSERT INTO roi_items(source,x,y,w,h,name,description,sort_order)"
-                    " VALUES(?,?,?,?,?,?,?,?)",
-                    [(r.source, r.x, r.y, r.w, r.h, r.name, r.description, i)
+                    "INSERT INTO roi_items(source,x,y,w,h,name,description,sort_order,roi_no_rec_enabled)"
+                    " VALUES(?,?,?,?,?,?,?,?,?)",
+                    [(r.source, r.x, r.y, r.w, r.h, r.name, r.description, i,
+                      int(r.roi_no_rec_enabled))
                      for i, r in enumerate(items)])
 
     def load_roi_items(self) -> List[RoiItem]:
@@ -637,12 +716,19 @@ class SettingsDB:
                     x INTEGER DEFAULT 0, y INTEGER DEFAULT 0,
                     w INTEGER DEFAULT 0, h INTEGER DEFAULT 0,
                     name TEXT DEFAULT '', description TEXT DEFAULT '',
-                    sort_order INTEGER DEFAULT 0)""")
+                    sort_order INTEGER DEFAULT 0,
+                    roi_no_rec_enabled INTEGER DEFAULT 0)""")
+                # 마이그레이션: 컬럼 없으면 추가
+                try:
+                    c.execute("ALTER TABLE roi_items ADD COLUMN roi_no_rec_enabled INTEGER DEFAULT 0")
+                except Exception:
+                    pass
                 rows = c.execute(
-                    "SELECT source,x,y,w,h,name,description"
+                    "SELECT source,x,y,w,h,name,description,roi_no_rec_enabled"
                     " FROM roi_items ORDER BY sort_order").fetchall()
         return [RoiItem(source=r[0], x=r[1], y=r[2], w=r[3], h=r[4],
-                        name=r[5], description=r[6]) for r in rows]
+                        name=r[5], description=r[6],
+                        roi_no_rec_enabled=bool(r[7])) for r in rows]
 
     # ── 경로 설정 ─────────────────────────────────────────────────────────────
     def get_path_settings(self) -> dict:
@@ -1331,7 +1417,7 @@ class CoreEngine:
     def scan_monitors(self):
         found = []
         try:
-            with mss.mss() as s:
+            with _mss_lib.mss() as s:
                 for i, m in enumerate(s.monitors):
                     name = ("전체 합성" if i==0 else f"Display {i}") + f"  ({m['width']}×{m['height']})"
                     found.append({"idx":i,"name":name,"w":m["width"],"h":m["height"]})
@@ -1683,7 +1769,7 @@ class CoreEngine:
             try:
                 # ★ 실제 캡처 프레임 크기로 VideoWriter 생성
                 # monitor dict 크기와 실제 프레임 크기가 다를 수 있음 (DPI 스케일링)
-                with mss.mss() as s:
+                with _mss_lib.mss() as s:
                     midx = min(self.active_monitor_idx, len(s.monitors) - 1)
                     mon  = s.monitors[midx]
                     img  = s.grab(mon)
@@ -1734,7 +1820,7 @@ class CoreEngine:
 
     # ── 스크린 루프 ───────────────────────────────────────────────────────────
     def _screen_loop(self):
-        with mss.mss() as sct:
+        with _mss_lib.mss() as sct:
             midx = min(self.active_monitor_idx, len(sct.monitors)-1)
             mon  = sct.monitors[midx]
             interval = 1.0/max(self.actual_screen_fps,1.0)
@@ -3108,20 +3194,39 @@ class PreviewLabel(QLabel):
         ch, cw = disp.shape[:2]
 
         # ── ROI 오버레이 (크롭 좌표로 변환) ───────────────────────────
-        def _draw_label(img, text, x, y, color=(255,255,255),
-                        scale=0.40, thickness=1, bg_alpha=0.45):
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            (tw, th), bl = cv2.getTextSize(text, font, scale, thickness)
-            px, py = 3, 2
-            x1 = max(x, 0); y1 = max(y - th - py, 0)
-            x2 = min(x + tw + px*2, img.shape[1]-1)
-            y2 = min(y + bl + py,   img.shape[0]-1)
-            sub = img[y1:y2, x1:x2]
-            if sub.size > 0:
-                img[y1:y2, x1:x2] = (sub * (1-bg_alpha)).astype(sub.dtype)
-            cv2.putText(img, text, (x, y), font,
-                        scale, color, thickness, cv2.LINE_AA)
-            return tw
+        # [문제1 수정] PIL 기반 한글 레이블 렌더링
+        _pil_fnt = _get_font(11)   # 11px 한글 폰트 (캐시에서 즉시)
+
+        def _draw_label_pil(pil_img, draw_obj, text, x, y,
+                            color=(255, 80, 80), bg_alpha=0.45):
+            """PIL로 한글 포함 레이블 렌더링."""
+            if not text:
+                return 0
+            try:
+                if _pil_fnt:
+                    bb = _pil_fnt.getbbox(text)
+                    tw, th = (bb[2]-bb[0]), (bb[3]-bb[1])
+                else:
+                    tw, th = len(text)*7, 12
+                px, py = 3, 2
+                x1, y1 = max(x, 0), max(y - th - py, 0)
+                x2, y2 = min(x + tw + px*2, pil_img.width-1), min(y + py + 2, pil_img.height-1)
+                # 반투명 배경
+                if x2 > x1 and y2 > y1:
+                    region = pil_img.crop((x1, y1, x2, y2))
+                    bg = _PIL_Image.new("RGB", region.size, (0, 0, 0))
+                    blended = _PIL_Image.blend(region, bg, bg_alpha)
+                    pil_img.paste(blended, (x1, y1))
+                # 텍스트
+                draw_obj.text((x + px, y - th - py),
+                              text, font=_pil_fnt, fill=color)
+                return tw + px * 2 + 8
+            except Exception:
+                return len(text) * 7 + 8
+
+        # ROI 사각형은 cv2로 (속도), 레이블은 PIL로 (한글)
+        pil_img = _PIL_Image.fromarray(disp) if PIL_AVAILABLE else None
+        draw_obj = _PIL_Draw.Draw(pil_img) if pil_img is not None else None
 
         INFO_SCALE = 0.40
         LABEL_H    = 14
@@ -3136,7 +3241,14 @@ class PreviewLabel(QLabel):
             # 클리핑
             drx  = max(rx, 0);  dry  = max(ry, 0)
             drx2 = min(rx2, cw); dry2 = min(ry2, ch)
+
+            # PIL로 렌더링 시 np array → PIL array 동기화
+            if pil_img is not None:
+                disp = np.array(pil_img)
             cv2.rectangle(disp, (drx, dry), (drx2, dry2), (255, 60, 60), 2)
+            if pil_img is not None:
+                pil_img = _PIL_Image.fromarray(disp)
+                draw_obj = _PIL_Draw.Draw(pil_img)
 
             above_y = ry - 4
             if above_y < LABEL_H:
@@ -3144,26 +3256,60 @@ class PreviewLabel(QLabel):
 
             name_lbl = roi.name if roi.name else f"ROI{i+1}"
             cur_x = drx
-            tw = _draw_label(disp, name_lbl, cur_x, above_y,
-                             color=(255, 80, 80), scale=INFO_SCALE)
-            cur_x += tw + 8
 
-            if getattr(self.engine, 'brightness_enabled', True):
-                bright_str = f"L:{roi.last_brightness:.0f}"
-                tw = _draw_label(disp, bright_str, cur_x, above_y,
-                                 color=(255, 200, 60), scale=INFO_SCALE)
-                cur_x += tw + 8
+            if pil_img is not None and draw_obj is not None:
+                # PIL 한글 렌더링
+                cur_x += _draw_label_pil(pil_img, draw_obj, name_lbl,
+                                          cur_x, above_y, color=(255, 80, 80))
+                if getattr(self.engine, 'brightness_enabled', True):
+                    bright_str = f"L:{roi.last_brightness:.0f}"
+                    cur_x += _draw_label_pil(pil_img, draw_obj, bright_str,
+                                              cur_x, above_y, color=(255, 200, 60))
+                # OCR 표시: 소스별 플래그 확인
+                _src = getattr(roi, 'source', 'screen')
+                _ocr_on = (getattr(self.engine, 'ocr_screen_enabled', True)
+                           if _src == 'screen'
+                           else getattr(self.engine, 'ocr_camera_enabled', True))
+                if _ocr_on:
+                    ocr_txt = (roi.last_text or "").strip()
+                    if ocr_txt.startswith("[ERR:"):
+                        ocr_show, ocr_col = "OCR:ERR", (255, 80, 80)
+                    elif ocr_txt and not ocr_txt.startswith("~"):
+                        ocr_show, ocr_col = f"OCR:{ocr_txt[:14]}", (60, 230, 255)
+                    else:
+                        ocr_show, ocr_col = "OCR:—", (100, 100, 120)
+                    _draw_label_pil(pil_img, draw_obj, ocr_show,
+                                    cur_x, above_y, color=ocr_col)
+            else:
+                # PIL 없을 때 cv2 fallback (ASCII만 올바르게 표시)
+                def _draw_label_cv(img, text, x, y, color=(255,255,255),
+                                    scale=0.40, thickness=1):
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    (tw, th), bl = cv2.getTextSize(text, font, scale, thickness)
+                    cv2.putText(img, text, (x, y), font,
+                                scale, color, thickness, cv2.LINE_AA)
+                    return tw + 8
+                cur_x += _draw_label_cv(disp, name_lbl, cur_x, above_y,
+                                         color=(255, 80, 80))
+                if getattr(self.engine, 'brightness_enabled', True):
+                    bright_str = f"L:{roi.last_brightness:.0f}"
+                    cur_x += _draw_label_cv(disp, bright_str, cur_x, above_y,
+                                             color=(255, 200, 60))
+                _src = getattr(roi, 'source', 'screen')
+                _ocr_on = (getattr(self.engine, 'ocr_screen_enabled', True)
+                           if _src == 'screen'
+                           else getattr(self.engine, 'ocr_camera_enabled', True))
+                if _ocr_on:
+                    ocr_txt = (roi.last_text or "").strip()
+                    ocr_show = ("OCR:ERR" if ocr_txt.startswith("[ERR:") else
+                                f"OCR:{ocr_txt[:14]}" if ocr_txt and not ocr_txt.startswith("~") else
+                                "OCR:--")
+                    _draw_label_cv(disp, ocr_show, cur_x, above_y,
+                                    color=(60, 230, 255))
 
-            if getattr(self.engine, 'ocr_enabled', True):
-                ocr_txt = (roi.last_text or "").strip()
-                if ocr_txt.startswith("[ERR:"):
-                    ocr_show, ocr_color = "OCR:ERR", (255, 80, 80)
-                elif ocr_txt and not ocr_txt.startswith("~"):
-                    ocr_show, ocr_color = f"OCR:{ocr_txt[:14]}", (60, 230, 255)
-                else:
-                    ocr_show, ocr_color = "OCR:—", (100, 100, 120)
-                _draw_label(disp, ocr_show, cur_x, above_y,
-                            color=ocr_color, scale=INFO_SCALE)
+        # PIL 최종 결과를 disp에 반영
+        if pil_img is not None:
+            disp = np.array(pil_img)
 
         # ── 줌 표시 (우상단) ──────────────────────────────────────────
         if self._zoom > 1.01:
@@ -3189,8 +3335,15 @@ class PreviewLabel(QLabel):
     def update_frame(self, frame: np.ndarray):
         if not self._active:
             return
-        # ── 밝기 캐시 업데이트 (brightness_enabled 시에만) ───────────
-        if getattr(self.engine, 'brightness_enabled', True):
+        # ── 밝기 캐시 업데이트 (소스별 brightness_enabled 플래그) ───────
+        _src = self.source  # "screen" | "camera"
+        if _src == "screen":
+            _brt_on = getattr(self.engine, 'brightness_screen_enabled',
+                              getattr(self.engine, 'brightness_enabled', True))
+        else:
+            _brt_on = getattr(self.engine, 'brightness_camera_enabled',
+                              getattr(self.engine, 'brightness_enabled', True))
+        if _brt_on:
             for roi in self._rois():
                 rx, ry, rw, rh = roi.rect()
                 region = frame[ry:ry+rh, rx:rx+rw]
@@ -3230,59 +3383,65 @@ class RoiManagerPanel(QWidget):
     def _build(self):
         v = QVBoxLayout(self); v.setContentsMargins(0,0,0,4); v.setSpacing(6)
 
-        # ── OCR / 밝기 ON/OFF 제어 바 ★ v2.9.3 ─────────────────────────
-        ctrl_row = QHBoxLayout(); ctrl_row.setSpacing(6)
+        # ── OCR / 밝기 ON/OFF 제어 바 — [문제2] 총 4개 독립 버튼 ──────────
+        # 1행: Display OCR / Display 밝기
+        # 2행: Camera OCR  / Camera 밝기
+        _ocr_ss = ("QPushButton{background:#0a3a4a;color:#3de;"
+                   "border:1px solid #1a6a7a;border-radius:4px;"
+                   "font-size:10px;font-weight:bold;}"
+                   "QPushButton:!checked{background:#0a0a18;color:#334;"
+                   "border-color:#1a1a2a;}"
+                   "QPushButton:hover{background:#0d4a5a;}")
+        _brt_ss = ("QPushButton{background:#3a3a0a;color:#ff0;"
+                   "border:1px solid #6a6a1a;border-radius:4px;"
+                   "font-size:10px;font-weight:bold;}"
+                   "QPushButton:!checked{background:#0a0a18;color:#334;"
+                   "border-color:#1a1a2a;}"
+                   "QPushButton:hover{background:#4a4a0d;}")
 
-        _btn_on_ss = (
-            "QPushButton{{background:{bg};color:{fg};"
-            "border:1px solid {bd};border-radius:4px;"
-            "font-size:10px;font-weight:bold;padding:2px 8px;}}"
-            "QPushButton:hover{{filter:brightness(1.2);}}")
-
-        # ★ v4.5: Display OCR / Camera OCR 독립 버튼
-        _ocr_ss_on  = ("QPushButton{background:#0a3a4a;color:#3de;"
-                        "border:1px solid #1a6a7a;border-radius:4px;"
-                        "font-size:10px;font-weight:bold;}"
-                        "QPushButton:!checked{background:#0a0a18;color:#334;"
-                        "border-color:#1a1a2a;}"
-                        "QPushButton:hover{background:#0d4a5a;}")
-
-        self._ocr_scr_btn = QPushButton("🖥 OCR ▶ ON")
-        self._ocr_scr_btn.setCheckable(True)
-        self._ocr_scr_btn.setChecked(True)
-        self._ocr_scr_btn.setFixedHeight(26)
-        self._ocr_scr_btn.setToolTip("Display(화면) ROI OCR ON/OFF")
-        self._ocr_scr_btn.setStyleSheet(_ocr_ss_on)
+        # --- 1행: Display ---
+        row1 = QHBoxLayout(); row1.setSpacing(4)
+        self._ocr_scr_btn = QPushButton("🖥 Display OCR ▶ ON")
+        self._ocr_scr_btn.setCheckable(True); self._ocr_scr_btn.setChecked(True)
+        self._ocr_scr_btn.setFixedHeight(24)
+        self._ocr_scr_btn.setToolTip("Display ROI OCR ON/OFF")
+        self._ocr_scr_btn.setStyleSheet(_ocr_ss)
         self._ocr_scr_btn.toggled.connect(self._on_ocr_screen_toggle)
 
-        self._ocr_cam_btn = QPushButton("📷 OCR ▶ ON")
-        self._ocr_cam_btn.setCheckable(True)
-        self._ocr_cam_btn.setChecked(True)
-        self._ocr_cam_btn.setFixedHeight(26)
+        self._bright_scr_btn = QPushButton("🖥 Display 밝기 ▶ ON")
+        self._bright_scr_btn.setCheckable(True); self._bright_scr_btn.setChecked(True)
+        self._bright_scr_btn.setFixedHeight(24)
+        self._bright_scr_btn.setToolTip("Display ROI 밝기 계산 ON/OFF")
+        self._bright_scr_btn.setStyleSheet(_brt_ss)
+        self._bright_scr_btn.toggled.connect(self._on_bright_screen_toggle)
+
+        row1.addWidget(self._ocr_scr_btn, 1)
+        row1.addWidget(self._bright_scr_btn, 1)
+        v.addLayout(row1)
+
+        # --- 2행: Camera ---
+        row2 = QHBoxLayout(); row2.setSpacing(4)
+        self._ocr_cam_btn = QPushButton("📷 Camera OCR ▶ ON")
+        self._ocr_cam_btn.setCheckable(True); self._ocr_cam_btn.setChecked(True)
+        self._ocr_cam_btn.setFixedHeight(24)
         self._ocr_cam_btn.setToolTip("Camera ROI OCR ON/OFF")
-        self._ocr_cam_btn.setStyleSheet(_ocr_ss_on)
+        self._ocr_cam_btn.setStyleSheet(_ocr_ss)
         self._ocr_cam_btn.toggled.connect(self._on_ocr_camera_toggle)
 
-        # 하위 호환: 단일 버튼 참조 (저장/복원 코드 호환)
-        self._ocr_btn = self._ocr_scr_btn
+        self._bright_cam_btn = QPushButton("📷 Camera 밝기 ▶ ON")
+        self._bright_cam_btn.setCheckable(True); self._bright_cam_btn.setChecked(True)
+        self._bright_cam_btn.setFixedHeight(24)
+        self._bright_cam_btn.setToolTip("Camera ROI 밝기 계산 ON/OFF")
+        self._bright_cam_btn.setStyleSheet(_brt_ss)
+        self._bright_cam_btn.toggled.connect(self._on_bright_camera_toggle)
 
-        self._bright_btn = QPushButton("💡 밝기 ▶ ON")
-        self._bright_btn.setCheckable(True)
-        self._bright_btn.setChecked(True)
-        self._bright_btn.setFixedHeight(26)
-        self._bright_btn.setStyleSheet(
-            "QPushButton{background:#3a3a0a;color:#ff0;"
-            "border:1px solid #6a6a1a;border-radius:4px;"
-            "font-size:10px;font-weight:bold;}"
-            "QPushButton:!checked{background:#0a0a18;color:#334;"
-            "border-color:#1a1a2a;}"
-            "QPushButton:hover{background:#4a4a0d;}")
-        self._bright_btn.toggled.connect(self._on_bright_toggle)
+        row2.addWidget(self._ocr_cam_btn, 1)
+        row2.addWidget(self._bright_cam_btn, 1)
+        v.addLayout(row2)
 
-        ctrl_row.addWidget(self._ocr_scr_btn, 1)
-        ctrl_row.addWidget(self._ocr_cam_btn, 1)
-        ctrl_row.addWidget(self._bright_btn, 1)
-        v.addLayout(ctrl_row)
+        # 하위 호환 별칭
+        self._ocr_btn   = self._ocr_scr_btn
+        self._bright_btn = self._bright_scr_btn
 
         # 소스 탭 선택
         tab_row = QHBoxLayout(); tab_row.setSpacing(6)
@@ -3368,7 +3527,7 @@ class RoiManagerPanel(QWidget):
         self._stat_lbl.setText(
             f"Display: {total_scr}개  |  Camera: {total_cam}개")
 
-    _ROW_H  = 70   # 조건 입력 줄 추가로 높이 확장
+    _ROW_H  = 80   # [문제3] NO→REC 버튼 행 추가로 높이 확장
 
     def _make_row(self, idx: int, roi: RoiItem) -> QFrame:
         row = QFrame()
@@ -3459,6 +3618,43 @@ class RoiManagerPanel(QWidget):
         row._match_lbl.setAlignment(Qt.AlignCenter)
         bot.addWidget(row._match_lbl)
 
+        # [문제3] NO 판정 시 자동녹화 ON/OFF 버튼 (ROI별)
+        row._no_rec_btn = QPushButton("NO→REC OFF")
+        row._no_rec_btn.setCheckable(True)
+        row._no_rec_btn.setChecked(roi.roi_no_rec_enabled)
+        row._no_rec_btn.setFixedHeight(18)
+        row._no_rec_btn.setFixedWidth(88)
+        row._no_rec_btn.setStyleSheet(
+            "QPushButton{background:#1a0a0a;color:#887;border:1px solid #3a2a2a;"
+            "border-radius:3px;font-size:9px;font-weight:bold;}"
+            "QPushButton:checked{background:#3a0a0a;color:#f87;"
+            "border-color:#8a2a2a;}"
+            "QPushButton:hover{background:#2a1010;}")
+        row._no_rec_btn.toggled.connect(
+            lambda on, i=idx, btn=row._no_rec_btn: self._on_no_rec_toggled(i, on, btn))
+        bot.addWidget(row._no_rec_btn)
+
+        # [문제3] NO→REC 카운트 레이블
+        row._no_count_lbl = QLabel(f"×{roi.no_match_count}")
+        row._no_count_lbl.setFixedWidth(28)
+        row._no_count_lbl.setStyleSheet(
+            "color:#f87;font-size:9px;font-weight:bold;background:transparent;")
+        row._no_count_lbl.setAlignment(Qt.AlignCenter)
+        row._no_count_lbl.setToolTip("MATCH→NO 전환 횟수")
+        bot.addWidget(row._no_count_lbl)
+
+        # [문제3] NO→REC 저장 폴더 열기 버튼
+        row._no_folder_btn = QPushButton("📂")
+        row._no_folder_btn.setFixedSize(20, 18)
+        row._no_folder_btn.setStyleSheet(
+            "QPushButton{background:#0a1a0a;color:#7fdb9e;border:1px solid #1a3a1a;"
+            "border-radius:3px;font-size:9px;}"
+            "QPushButton:hover{background:#0d2a0d;}")
+        row._no_folder_btn.setToolTip("NO→REC 저장 폴더 열기")
+        row._no_folder_btn.clicked.connect(
+            lambda _, i=idx: self._open_no_rec_folder(i))
+        bot.addWidget(row._no_folder_btn)
+
         outer.addLayout(bot)
 
         # 마우스 이벤트 (드래그앤드랍)
@@ -3506,38 +3702,53 @@ class RoiManagerPanel(QWidget):
         """★ v4.5: Display(화면) ROI OCR 독립 ON/OFF."""
         self.engine.ocr_screen_enabled = on
         self.engine.ocr_enabled = on  # 하위 호환 유지
-        self._ocr_scr_btn.setText("🖥 OCR ▶ ON" if on else "🖥 OCR ⏸ OFF")
-        self._ocr_scr_btn.setToolTip(
-            "Display OCR 활성화 중" if on
-            else "Display OCR 비활성화 — 연산 없음 (자원 절약)")
+        self._ocr_scr_btn.setText("🖥 Display OCR ▶ ON" if on else "🖥 Display OCR ⏸ OFF")
 
     def _on_ocr_camera_toggle(self, on: bool):
         """★ v4.5: Camera ROI OCR 독립 ON/OFF."""
         self.engine.ocr_camera_enabled = on
-        self._ocr_cam_btn.setText("📷 OCR ▶ ON" if on else "📷 OCR ⏸ OFF")
-        self._ocr_cam_btn.setToolTip(
-            "Camera OCR 활성화 중" if on
-            else "Camera OCR 비활성화 — 연산 없음 (자원 절약)")
+        self._ocr_cam_btn.setText("📷 Camera OCR ▶ ON" if on else "📷 Camera OCR ⏸ OFF")
 
-    def _on_bright_toggle(self, on: bool):
-        """밝기 ON/OFF — engine.brightness_enabled 플래그 + 버튼 텍스트 갱신."""
-        self.engine.brightness_enabled = on
-        self._bright_btn.setText("💡 밝기 ▶ ON" if on else "💡 밝기 ⏸ OFF")
-        self._bright_btn.setToolTip(
-            "밝기 계산 활성화 — ROI 평균 밝기 측정 중" if on
-            else "밝기 계산 비활성화 — 밝기 연산 없음 (자원 절약)\n"
-                 "※ 블랙아웃 기능은 별도 ON/OFF로 동작합니다")
-        # 밝기 OFF 시 last_brightness 초기화 (오래된 값 표시 방지)
+    def _on_bright_screen_toggle(self, on: bool):
+        """[문제2] Display ROI 밝기 ON/OFF."""
+        self.engine.brightness_screen_enabled = on
+        # 하위 호환: 둘 다 OFF일 때만 전체 밝기 비활성
+        cam_on = getattr(self.engine, 'brightness_camera_enabled', True)
+        self.engine.brightness_enabled = on or cam_on
+        self._bright_scr_btn.setText("🖥 Display 밝기 ▶ ON" if on else "🖥 Display 밝기 ⏸ OFF")
         if not on:
-            for roi in self.engine.screen_rois + self.engine.camera_rois:
+            for roi in self.engine.screen_rois:
                 roi.last_brightness = 0.0
                 roi.last_avg_bgr    = (0, 0, 0)
+
+    def _on_bright_camera_toggle(self, on: bool):
+        """[문제2] Camera ROI 밝기 ON/OFF."""
+        self.engine.brightness_camera_enabled = on
+        scr_on = getattr(self.engine, 'brightness_screen_enabled', True)
+        self.engine.brightness_enabled = scr_on or on
+        self._bright_cam_btn.setText("📷 Camera 밝기 ▶ ON" if on else "📷 Camera 밝기 ⏸ OFF")
+        if not on:
+            for roi in self.engine.camera_rois:
+                roi.last_brightness = 0.0
+                roi.last_avg_bgr    = (0, 0, 0)
+
+    def _on_bright_toggle(self, on: bool):
+        """하위 호환용 — Display 밝기 토글과 동일."""
+        self._on_bright_screen_toggle(on)
 
     def _on_cond_changed(self, idx: int, value: str):
         """사용자가 조건 입력란을 수정하면 RoiItem.cond_value 업데이트."""
         rois = self._current_rois()
         if 0 <= idx < len(rois):
             rois[idx].cond_value = value.strip()
+
+    def _on_no_rec_toggled(self, idx: int, on: bool, btn: "QPushButton"):
+        """[문제3] ROI별 NO→자동녹화 ON/OFF."""
+        rois = self._current_rois()
+        if 0 <= idx < len(rois):
+            rois[idx].roi_no_rec_enabled = on
+        btn.setText("NO→REC ON" if on else "NO→REC OFF")
+        self.changed.emit()
 
     # ── OCR 레이블 실시간 갱신 (QTimer 30fps) ────────────────────────────
     def start_ocr_refresh(self):
@@ -3589,6 +3800,7 @@ class RoiManagerPanel(QWidget):
                     match_lbl.setStyleSheet("color:#446;font-size:9px;")
                 else:
                     matched = self._eval_cond(txt, cond)
+                    prev_match = roi.last_match
                     if matched:
                         match_lbl.setText("✅ MATCH")
                         match_lbl.setStyleSheet(
@@ -3599,6 +3811,29 @@ class RoiManagerPanel(QWidget):
                             "color:#e74c3c;font-size:9px;font-weight:bold;")
                     # RoiItem에 결과 캐시
                     roi.last_match = matched
+
+                    # [문제3] NO 판정 시 자동녹화 트리거
+                    # prev_match=True → matched=False 로 전환된 순간만 트리거
+                    # (매 루프마다 반복 트리거 방지)
+                    if (not matched and prev_match
+                            and roi.roi_no_rec_enabled
+                            and cond):
+                        self._trigger_no_rec(roi)
+
+            # NO→REC 카운트 레이블 갱신
+            no_count_lbl = getattr(row, '_no_count_lbl', None)
+            if no_count_lbl:
+                no_count_lbl.setText(f"×{roi.no_match_count}")
+
+            # NO→REC 버튼 텍스트 동기화 (DB 복원 후 초기화 시)
+            no_rec_btn = getattr(row, '_no_rec_btn', None)
+            if no_rec_btn:
+                label = "NO→REC ON" if roi.roi_no_rec_enabled else "NO→REC OFF"
+                if no_rec_btn.text() != label:
+                    no_rec_btn.blockSignals(True)
+                    no_rec_btn.setChecked(roi.roi_no_rec_enabled)
+                    no_rec_btn.setText(label)
+                    no_rec_btn.blockSignals(False)
 
     @staticmethod
     def _eval_cond(ocr_text: str, cond: str) -> bool:
@@ -3651,6 +3886,56 @@ class RoiManagerPanel(QWidget):
             rois.pop(idx)
             self.signals.roi_list_changed.emit()
             self.changed.emit()
+
+    def _trigger_no_rec(self, roi: RoiItem):
+        """
+        [문제3] OCR 조건 NO 판정 시 자동녹화 트리거.
+        수동녹화(pre=-10초, post=+10초)와 동일한 방식으로 클립 저장.
+        블랙아웃 클립과 동시에 실행 가능 (독립 스레드).
+        저장 경로: 기존 저장 경로 설정에 따름 (독립 저장).
+        """
+        engine = self.engine
+        # 카운트 증가
+        roi.no_match_count += 1
+        try:
+            # 기존 수동녹화 설정 백업
+            orig_pre  = engine.manual_pre_sec
+            orig_post = engine.manual_post_sec
+            # -10초 ~ +10초 고정 (요구사항)
+            engine.manual_pre_sec  = 10.0
+            engine.manual_post_sec = 10.0
+
+            roi_label = roi.label()
+            self.signals.status_message.emit(
+                f"[ROI NO→REC] '{roi_label}' OCR 불일치 → 자동 클립 저장 (×{roi.no_match_count})")
+
+            def _save_clip():
+                try:
+                    engine.save_manual_clip()
+                except Exception:
+                    pass
+                finally:
+                    engine.manual_pre_sec  = orig_pre
+                    engine.manual_post_sec = orig_post
+
+            import threading as _th
+            _th.Thread(target=_save_clip, daemon=True,
+                       name=f"ROI_NO_REC_{roi_label[:10]}").start()
+        except Exception:
+            pass
+
+    def _open_no_rec_folder(self, idx: int):
+        """[문제3] NO→REC 저장 폴더를 탐색기로 열기."""
+        try:
+            p = self.engine._build_path("manual")
+            while p and not os.path.exists(p) and p != os.path.dirname(p):
+                p = os.path.dirname(p)
+            if p and os.path.exists(p):
+                open_folder(p)
+            else:
+                open_folder(self.engine.base_dir)
+        except Exception:
+            pass
 
     def _clear_all(self):
         self._current_rois().clear()
@@ -6091,25 +6376,7 @@ _API_DOC = """
     engine.stop_recording()
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- [수동녹화 — engine.save_manual_clip()]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  engine.save_manual_clip() → bool
-      현재 시점 기준 pre/post 클립 저장. 쿨다운 중이면 False.
-  engine.manual_pre_sec  : float  (기본 10.0초)
-  engine.manual_post_sec : float  (기본 10.0초)
-  engine.manual_source   : str    "screen" | "camera" | "both"
-
-  예시: 특정 이벤트 발생 시 클립 저장
-    engine.manual_pre_sec  = 5.0   # 이벤트 5초 전부터
-    engine.manual_post_sec = 5.0   # 이벤트 5초 후까지
-    engine.manual_source   = "both"
-    while not kernel.is_stopped():
-        val = kernel.read_roi_number(0, "screen")
-        if val is not None and val < 10:
-            log(f"이벤트 발생! val={val}")
-            engine.save_manual_clip()
-            break
-        kernel.wait(0.3)
+ [수동녹화 — engine.save_manual_clip()]\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  engine.save_manual_clip() → bool\n      현재 시점 기준 pre/post 클립 저장. 쿨다운 중이면 False.\n  engine.manual_pre_sec  : float  (기본 10.0초)\n  engine.manual_post_sec : float  (기본 10.0초)\n  engine.manual_source   : str    \"screen\" | \"camera\" | \"both\"\n\n  ★ AI Chat에서 시간만 설정할 때:\n    {\"action\":\"set_manual_clip_time\", \"before\":15, \"after\":20}\n    → before=앞(초), after=뒤(초) 설정만. 녹화 미실행.\n    ⚠ manual_clip 액션은 즉시 녹화를 시작하므로 혼용 금지.\n\n  예시: 특정 이벤트 발생 시 클립 저장\n    engine.manual_pre_sec  = 5.0   # 이벤트 5초 전부터\n    engine.manual_post_sec = 5.0   # 이벤트 5초 후까지\n    engine.manual_source   = \"both\"\n    while not kernel.is_stopped():\n        val = kernel.read_roi_number(0, \"screen\")\n        if val is not None and val < 10:\n            log(f\"이벤트 발생! val={val}\")\n            engine.save_manual_clip()\n            break\n        kernel.wait(0.3)\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n [OHCL 스위치(A1) 트리거 — 하드웨어 자동 연동]\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  Arduino A1(PC1) OHCL 택트스위치:\n    단타 (< 1.3초)  → UART \"SW7\\n\" + \"M\\n\" → 수동녹화 자동 실행\n    장누름 (≥ 1.3초) → UART \"SW8\\n\" + \"N\\n\" → 타임랩스 자동 실행\n  Arduino A2(PC2): BLTN OHCL LED PWM 신호 입력 → LED 상태 패널에 표시\n  ※ 이 기능은 하드웨어 인터럽트 기반이므로 커널/AI 스크립트 개입 불필요.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  [캡처 — engine.capture_frame()]
@@ -6281,10 +6548,13 @@ _API_DOC = """
              스크립트 내에서 kernel.power_connect()로 직접 연결.
 
   채널 이름 (channel 파라미터):
-    "bplus"    → B+  (Battery)
-    "tg_bplus" → TG B+ (Target)
-    "acc"      → ACC (Accessory)
-    "ign"      → IGN (Ignition)
+    "bplus"      → B+  (Battery)
+    "tg_bplus"   → TG B+ (Target)
+    "acc"        → ACC (Accessory)
+    "ign"        → IGN (Ignition)
+    "plbm_real"  → PLBM 실물 릴레이 (D5 스위치/D12 릴레이)  ★ v4.0
+    "plbm_sim"   → PLBM 모사 릴레이 (D6 스위치/D13 릴레이)  ★ v4.0
+                   ※ plbm_real / plbm_sim 은 상호 배타 (동시 ON 불가)
 
   kernel.power_connected : bool
       현재 시리얼 연결 여부
@@ -6872,7 +7142,8 @@ class CanBusManager:
                             _wlog(f"❌ 모든 방법 실패: {short_lines}")
                             all_ok = False
 
-                _bus = None  # 초기화
+                    return all_ok   # ★ [버그 수정] 누락된 return 추가
+                _bus_fail_cnt = 0   # GetBus 연속 실패 카운터
 
                 while not self._rx_stop.is_set():
                     # ★ write 큐 처리를 루프 최상단에 — _bus None/continue에 영향 없음
@@ -6905,43 +7176,47 @@ class CanBusManager:
                         all_sigs = {s: poll_sigs.get(s, "")
                                     for s in (sub_sigs | set(poll_sigs))}
                         ts_now = _t.time()
-                        # GetBus('CAN') 은 연결 시 확인됨
-                        try:
-                            _bus = app.GetBus(_bus_name_found)
-                        except Exception as _be:
-                            _bus = None
+
+                        # ★ [3초 지연 근본 원인 수정]
+                        # GetBus()는 COM IDispatch 획득 — 매 루프 호출 시 수백ms~수초 소요.
+                        # _bus 객체를 캐시하고, 실패(예외 발생) 시에만 재획득.
+                        # → 정상 동작 중 GetBus() 호출 횟수: 루프당 0회 (캐시 재사용)
+                        if _bus is None:
+                            try:
+                                _bus = app.GetBus(_bus_name_found)
+                                _bus_fail_cnt = 0
+                            except Exception as _be:
+                                _bus_fail_cnt += 1
+                                # 연속 실패 5회까지는 짧게 재시도, 이후 100ms 대기
+                                _t.sleep(0.02 if _bus_fail_cnt < 5 else 0.1)
+                                continue
                         if _bus is None:
                             _t.sleep(0.1); continue
 
                         for sig_name, msg_name in all_sigs.items():
-                            val = _read_signal_value(_bus, sig_name, msg_name)
+                            try:
+                                val = _read_signal_value(_bus, sig_name, msg_name)
+                            except Exception:
+                                # GetSignal 예외 = _bus 객체 무효화 → 다음 루프에서 재획득
+                                _bus = None
+                                break
                             if val is None:
                                 continue
 
-                            # ★ 값 변화 감지 — 이전값과 다를 때만 이벤트 기록
-                            # CANoe sig.LastUpdateTime 시도 → 실패 시 현재 시각
+                            # 타임스탬프: 현재 시각 사용 (GetBus 캐시로 ts_now 정확도 향상)
                             ts = ts_now
-                            try:
-                                # CANoe COM API: ISignal.LastUpdateTime (초 단위)
-                                sig_obj = _sig_method_cache.get(sig_name)
-                                if sig_obj:
-                                    raw_sig = sig_obj()
-                                    last_t = getattr(raw_sig, 'LastUpdateTime', None)
-                                    if last_t is not None and float(last_t) > 0:
-                                        # CANoe 측정 시작 기준 상대시간 → 절대시간 근사
-                                        ts = ts_now  # 절대변환 어려우므로 현재시각 사용
-                            except Exception:
-                                pass
 
-                            # ★ 0.1초마다 무조건 기록 (값 변화 여부 무관)
+                            # sig_cache 업데이트
                             self.sig_cache[sig_name] = (ts, val)
                             ev_key  = f"_EV_{sig_name}"
-                            ev_list = self.sig_cache.get(ev_key, [])
+                            ev_list = self.sig_cache.get(ev_key)
                             if not isinstance(ev_list, list):
                                 ev_list = []
                             ev_list.append((ts, val))
-                            if len(ev_list) > 6000:   # 최대 10분 @ 0.1s
-                                ev_list.pop(0)
+                            # ★ [최적화] 9000개 초과 시에만 trim (매 루프 슬라이싱 제거)
+                            # 9000pts @ 20ms = 3분치 보관
+                            if len(ev_list) > 9900:   # 10% 여유 두고 trim
+                                del ev_list[:900]      # list slice 대신 del → 제자리 삭제
                             self.sig_cache[ev_key] = ev_list
                             # 값 변화 시에만 구독자 콜백
                             prev = self.sig_cache.get(f"_PREV_{sig_name}")
@@ -6953,7 +7228,8 @@ class CanBusManager:
                                         except Exception: pass
                     except Exception:
                         pass
-                    self._rx_stop.wait(0.1)
+                    # 20ms 대기 — GetBus 캐시로 실제 폴링 지연은 ~GetSignal(1ms) + 20ms
+                    self._rx_stop.wait(0.02)
 
             except Exception as ex:
                 import traceback as _tb
@@ -7068,6 +7344,28 @@ class CanBusManager:
         except Exception as ex:
             self.status_msg = f"CAN 연결 실패: {ex}"
             self.connected = False; return False
+
+    def get_vector_devices(self) -> list:
+        """연결된 Vector 하드웨어 장비 목록 조회."""
+        devices = []
+        if not self.canoe_mode or not self._canoe_app:
+            try:
+                import can as _can
+                for c in _can.detect_available_configs(interfaces=['vector']):
+                    devices.append({"name":c.get('app_name','Vector'),
+                        "type":c.get('interface','vector'),
+                        "channel":c.get('channel',0),
+                        "serial":str(c.get('serial',''))})
+            except Exception as e:
+                devices.append({"name":str(e),"type":"error","channel":0,"serial":""})
+            return devices
+        for _bn in ["CAN","CAN 1","CAN 2","CAN FD 1"]:
+            try:
+                if self._canoe_app.GetBus(_bn):
+                    devices.append({"name":_bn,"type":"CANoe Bus","channel":1,"serial":""})
+            except Exception:
+                pass
+        return devices
 
     def disconnect(self):
         self._rx_stop.set()
@@ -7303,7 +7601,7 @@ _can_manager = CanBusManager()
 # =============================================================================
 #  GeminiChatController — Google Gemini API 기반 AI 컨트롤러
 # =============================================================================
-_SYS = """\
+_SYS_STATIC = """\
 당신은 Screen & Camera Recorder 프로그램의 AI 비서입니다.
 사용자 요청을 분석해 반드시 JSON 형식 하나만 출력하세요. 다른 텍스트 절대 금지.
 
@@ -7312,6 +7610,8 @@ _SYS = """\
 2. 프로그램 무관 일반 대화/질문 → chat 액션으로 답변.
 3. CAN 신호값 질문 → can_read 액션 사용.
 4. 커널 스크립트 작성 요청 → make_script 액션에 완성된 Python 코드 포함.
+5. 사용자가 요청한 로직을 존재하는 함수만으로 구현. 불가능/애매하면 스크립트 먼저 작성 후 "이렇게 이해했는데 맞나요?" 되물을 것.
+6. 수동녹화 시간(앞/뒤) 설정 요청 → 반드시 set_manual_clip_time 액션만 사용. manual_clip 액션 절대 금지 (manual_clip은 즉시 녹화를 시작함).
 
 【engine API】
 engine.start_recording() / stop_recording() / recording: bool
@@ -7324,53 +7624,46 @@ engine.tc_verify_result (PASS/FAIL) / output_dir / base_dir
 kernel.wait(seconds) / kernel.is_stopped() -> bool
 kernel.set_tc_result(PASS/FAIL) / kernel.emit_status(msg)
 kernel.read_roi_text(N, source) / read_roi_number(N, source)
-kernel.power_on(ch) / power_off(ch)  ch: bplus/tg_bplus/acc/ign
-kernel.power_all_on(delay=0.3)  # 전체 채널 순서대로 ON
-kernel.power_all_off()  # 전체 채널 즉시 OFF
+kernel.power_on(ch) / power_off(ch)  ch: bplus/tg_bplus/acc/ign/plbm_real/plbm_sim
+kernel.power_all_on(delay=0.3) / power_all_off()
 
 【can API (커널 스크립트 전용)】
-can.can_read(sig_name) -> float|None  # 현재 캐시값 즉시 반환
-can.can_wait_value(sig_name, expected, timeout) -> bool  # 값 도달 대기
-can.canoe_write(msg_name, {sig_name: val}) -> bool  # 신호 출력
-can.add_poll_signal(sig_name, msg_name)  # 폴링 등록
-
-【커널 스크립트 예시 (CAN 기반 자동화)】
-# BLTN_CAM_RecSta_OWD 가 1이 되면 녹화 종료:
-can.add_poll_signal('BLTN_CAM_RecSta_OWD', 'BLTN_CAM_FD_STAT_01_200ms')
-engine.start_recording()
-ok = can.can_wait_value('BLTN_CAM_RecSta_OWD', expected=1, timeout=30)
-engine.stop_recording()
-kernel.set_tc_result('PASS' if ok else 'FAIL')
-
-# 신호값 읽고 조건 분기:
-can.add_poll_signal('BLTN_CAM_RecSta_OWD', 'BLTN_CAM_FD_STAT_01_200ms')
-kernel.wait(1)
-v = can.can_read('BLTN_CAM_RecSta_OWD')
-if v is None or v != 1.0:
-    engine.save_manual_clip()
-    kernel.set_tc_result('FAIL')
+can.can_read(sig_name) -> float|None
+can.can_wait_value(sig_name, expected, timeout) -> bool
+can.canoe_write(msg_name, {sig_name: val}) -> bool
+can.add_poll_signal(sig_name, msg_name)
 
 【AI 직접 실행 가능한 액션】
 {"action":"start_recording"}
 {"action":"stop_recording","result":"PASS"}
 {"action":"capture","source":"screen","tc_tag":""}
 {"action":"manual_clip"}
-{"action":"start_ac"}
-{"action":"stop_ac"}
-{"action":"macro_run","slot":1,"repeat":1}
-{"action":"macro_stop"}
+{"action":"set_manual_clip_time","before":15,"after":20}
+{"action":"start_ac"} / {"action":"stop_ac"}
+{"action":"macro_run","slot":1,"repeat":1} / {"action":"macro_stop"}
 {"action":"roi_read_text","roi":1,"source":"screen"}
 {"action":"roi_read_number","roi":1,"source":"screen"}
 {"action":"roi_read_all","source":"screen"}
+{"action":"roi_set_no_rec","roi":1,"source":"screen","enabled":true}
+{"action":"roi_set_cond","roi":1,"source":"screen","cond_value":"2"}
+{"action":"roi_no_count","source":"screen"}
+{"action":"roi_open_folder","roi":1}
 {"action":"power_on","channel":"bplus"}
 {"action":"power_off","channel":"bplus"}
-{"action":"power_all_off"}
-{"action":"power_status"}
-{"action":"can_read","signal":"BLTN_CAM_RecSta_OWD"}
+{"action":"power_all_off"} / {"action":"power_status"}
+{"action":"can_read","signal":"신호명"}
 {"action":"can_read_all"}
-{"action":"can_write","message":"HU_BLTN_CAM_02_200ms","signal":"HU_BLTN_CAM_UI_Mode","value":1}
+{"action":"can_write","message":"메시지명","signal":"신호명","value":1}
 {"action":"can_status"}
-{"action":"make_script","code":"can.add_poll_signal('BLTN_CAM_RecSta_OWD','BLTN_CAM_FD_STAT_01_200ms')\\nkernel.wait(1)\\nv = can.can_read('BLTN_CAM_RecSta_OWD')\\nlog(f'값: {v}')"}
+{"action":"timer_start"} / {"action":"timer_stop"} / {"action":"timer_reset"}
+{"action":"timer_lap"} / {"action":"timer_status"}
+{"action":"blackout_set_threshold","value":30}
+{"action":"blackout_set_enabled","enabled":true}
+{"action":"ocr_set","source":"screen","enabled":true}
+{"action":"brightness_set","source":"camera","enabled":false}
+{"action":"kernel_run_all"} / {"action":"kernel_stop"} / {"action":"kernel_status"}
+{"action":"memory_status"} / {"action":"memory_compress"} / {"action":"memory_clear"}
+{"action":"make_script","code":"python코드"}
 {"action":"status"}
 {"action":"chat","message":"답변"}
 
@@ -7379,15 +7672,11 @@ if v is None or v != 1.0:
 - 대기: kernel.wait(초)  (time.sleep 금지)
 - ROI 인덱스: 1-based (UI 번호 그대로)
 - 코드 줄바꿈: \\n 사용
-
-【예시】
-Q:"BLTN_CAM_RecSta_OWD 값 알려줘" -> {"action":"can_read","signal":"BLTN_CAM_RecSta_OWD"}
-Q:"현재 CAN 신호 전부 알려줘" -> {"action":"can_read_all"}
-Q:"HU UI Mode 1로 설정" -> {"action":"can_write","message":"HU_BLTN_CAM_02_200ms","signal":"HU_BLTN_CAM_UI_Mode","value":1}
-Q:"BLTN_CAM_RecSta_OWD 읽는 스크립트 짜줘" -> {"action":"make_script","code":"can.add_poll_signal('BLTN_CAM_RecSta_OWD','BLTN_CAM_FD_STAT_01_200ms')\\nkernel.wait(1)\\nv=can.can_read('BLTN_CAM_RecSta_OWD')\\nlog(f'값:{v}')"}
-Q:"녹화 시작" -> {"action":"start_recording"}
-Q:"안녕" -> {"action":"chat","message":"안녕하세요! 녹화·CAN 제어·커널 스크립트 작성을 도와드립니다."}
 """
+
+# _SYS는 AIChatController._build_sys_prompt()가 동적으로 생성.
+# 하위 호환용으로 정적 버전도 남겨둠.
+_SYS = _SYS_STATIC
 
 
 _AI_PROVIDERS = {
@@ -7407,15 +7696,298 @@ class AIChatController(QObject):
         self._power    = None
         self._can      = _can_manager
         self._kernel   = None   # KernelEngine (MainWindow에서 주입)
-        self._history  = []
+        self._history  = []     # Layer 3: 단기 대화 (최근 6턴)
         self._lock     = threading.Lock()
-        self._provider = "groq"           # 기본값: Groq
+        self._provider = "groq"
         self._model    = "llama-3.1-8b-instant"
         self._api_key  = ""
-        self._client   = None             # 초기화된 클라이언트
+        self._client   = None
+
+        # ── 3-레이어 메모리 ────────────────────────────────────────────
+        # Layer 1: 장기기억 — 압축된 대화 요약 (ai_knowledge.json에 저장)
+        self._long_term_summary: str = ""   # 압축 요약 문자열
+        self._long_term_tokens:  int = 0    # 추정 토큰 수
+        # Layer 2: 동적 상태 — _build_sys_prompt()가 매번 생성
+        # Layer 3: 단기 히스토리 — self._history (최대 6턴=12개 항목)
+
+        # 토큰 경고 임계값
+        self._TOKEN_WARN  = 2500   # 이 이상이면 사용자에게 경고
+        self._TOKEN_COMPRESS = 3000  # 이 이상이면 자동 압축
+        self._last_token_est = 0   # 마지막 요청의 추정 토큰 수
+
+        # 장기기억 로드 (시작 시 ai_knowledge.json에서 복원)
+        self._load_long_term_memory()
+
+    # ── Layer 1: 장기기억 관리 ────────────────────────────────────────────
+    def _knowledge_path(self) -> str:
+        base = getattr(self._engine, 'base_dir',
+                       os.path.join(os.path.expanduser("~/Desktop"), "bltn_rec"))
+        return os.path.join(base, "ai_knowledge.json")
+
+    def _load_long_term_memory(self):
+        """시작 시 ai_knowledge.json에서 장기기억 복원."""
+        try:
+            path = self._knowledge_path()
+            if not os.path.isfile(path):
+                return
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            summary = data.get("long_term_summary", "")
+            if summary:
+                self._long_term_summary = summary
+                self._long_term_tokens  = self._estimate_tokens(summary)
+        except Exception:
+            pass
+
+    def _save_long_term_memory(self):
+        """장기기억을 ai_knowledge.json에 저장."""
+        try:
+            path = self._knowledge_path()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            data = {}
+            if os.path.isfile(path):
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except Exception:
+                    data = {}
+            data["long_term_summary"] = self._long_term_summary
+            data["_summary_updated"]  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """
+        토큰 수 추정 (실제 토크나이저 없이 근사).
+        한글: 1자 ≈ 1.5토큰, 영문: 1단어 ≈ 1.3토큰.
+        """
+        korean_chars = sum(1 for c in text if '\uAC00' <= c <= '\uD7A3')
+        other_words  = len(text.split()) - korean_chars
+        return int(korean_chars * 1.5 + max(0, other_words) * 1.3)
+
+    def _compress_history_to_long_term(self):
+        """
+        단기 히스토리(Layer 3)를 요약해서 장기기억(Layer 1)으로 이동.
+        요약은 LLM API를 사용하지 않고 규칙 기반으로 수행 (API 비용 절약).
+        """
+        with self._lock:
+            if not self._history:
+                return
+            # 대화에서 실행된 액션 / 사용자 요청 키워드 추출
+            actions_done = []
+            user_topics  = []
+            for h in self._history:
+                role  = h.get("role", "")
+                parts = h.get("parts", [])
+                text  = parts[0] if parts else ""
+                if role == "user" and text:
+                    # 핵심 키워드만 (앞 30자)
+                    user_topics.append(text[:30].replace("\n", " "))
+                elif role == "model" and text:
+                    # 완료된 액션 추출
+                    if "✅" in text:
+                        actions_done.append(text[:50].replace("\n", " "))
+
+            summary_parts = []
+            if actions_done:
+                summary_parts.append("【완료된 작업】" + " / ".join(actions_done[-5:]))
+            if user_topics:
+                summary_parts.append("【이전 대화 주제】" + " / ".join(user_topics[-5:]))
+
+            new_summary = "\n".join(summary_parts)
+            # 기존 장기기억에 누적 (오래된 것은 앞쪽으로 밀어내고 최신 유지)
+            combined = (self._long_term_summary + "\n" + new_summary).strip()
+            # 장기기억도 너무 길어지면 앞부분 잘라냄 (최대 800토큰)
+            while self._estimate_tokens(combined) > 800:
+                lines = combined.split("\n")
+                combined = "\n".join(lines[max(1, len(lines)//4):])
+            self._long_term_summary = combined
+            self._long_term_tokens  = self._estimate_tokens(combined)
+            self._history.clear()  # 단기 히스토리 초기화
+
+        self._save_long_term_memory()
+
+    def _check_token_pressure(self, sys_prompt: str, history_copy: list) -> int:
+        """
+        현재 요청의 총 추정 토큰 계산.
+        반환: 추정 토큰 수
+        """
+        total = self._estimate_tokens(sys_prompt)
+        for h in history_copy:
+            parts = h.get("parts", [])
+            total += self._estimate_tokens(parts[0] if parts else "")
+        return total
 
     def set_power(self, power_ctrl):
         self._power = power_ctrl
+
+    def _build_sys_prompt(self) -> str:
+        """
+        실행 시점의 프로그램 상태를 반영한 동적 시스템 프롬프트 생성.
+
+        포함 내용:
+          1. 정적 API 명세 (_SYS_STATIC)
+          2. 현재 등록된 ROI 목록 (이름·소스·OCR 조건·NO→REC 상태)
+          3. 현재 핵심 설정값 (버퍼, pre/post, 저장경로, FPS 등)
+          4. 전원 제어 연결 상태
+          5. CAN 연결 상태 + 로드된 신호 목록 (최대 40개)
+          6. 타이머 패널 상태
+          7. ai_knowledge.json 의 user_notes (사용자 추가 교육 내용)
+        """
+        e   = self._engine
+        can = self._can
+        lines = [_SYS_STATIC]
+
+        # ── 1. 현재 ROI 상태 ────────────────────────────────────────────
+        scr_rois = getattr(e, 'screen_rois', []) or []
+        cam_rois = getattr(e, 'camera_rois', []) or []
+        if scr_rois or cam_rois:
+            lines.append("\n【현재 등록된 ROI】")
+            for src, rois in (("screen", scr_rois), ("camera", cam_rois)):
+                for i, roi in enumerate(rois):
+                    cond = f" | OCR조건={roi.cond_value!r}" if roi.cond_value else ""
+                    norec = f" | NO→REC={'ON' if roi.roi_no_rec_enabled else 'OFF'}" \
+                            if roi.cond_value else ""
+                    cnt = f" (NO횟수:{roi.no_match_count})" if roi.no_match_count else ""
+                    lines.append(
+                        f"  ROI {i+1} [{src}] 이름={roi.label()!r}"
+                        f" 위치=({roi.x},{roi.y}) 크기={roi.w}×{roi.h}"
+                        f"{cond}{norec}{cnt}"
+                        f" OCR최근값={roi.last_text!r}"
+                    )
+        else:
+            lines.append("\n【현재 등록된 ROI】없음 (ROI 관리 패널에서 추가 필요)")
+
+        # ── 2. 현재 설정값 ───────────────────────────────────────────────
+        lines.append("\n【현재 프로그램 설정값】")
+        lines.append(f"  녹화중={getattr(e,'recording',False)}")
+        lines.append(f"  버퍼={getattr(e,'buffer_seconds',40)}초")
+        lines.append(f"  수동녹화 pre={getattr(e,'manual_pre_sec',10)}초"
+                     f" / post={getattr(e,'manual_post_sec',10)}초"
+                     f" / 소스={getattr(e,'manual_source','both')}")
+        lines.append(f"  화면FPS={getattr(e,'actual_screen_fps',30)}"
+                     f"  카메라FPS={getattr(e,'actual_camera_fps',30)}")
+        lines.append(f"  저장경로={getattr(e,'base_dir','?')}")
+        out = getattr(e, 'output_dir', '')
+        if out:
+            lines.append(f"  현재출력경로={out}")
+        lines.append(f"  Display OCR={getattr(e,'ocr_screen_enabled',True)}"
+                     f"  Camera OCR={getattr(e,'ocr_camera_enabled',True)}")
+        lines.append(f"  Display밝기={getattr(e,'brightness_screen_enabled',True)}"
+                     f"  Camera밝기={getattr(e,'brightness_camera_enabled',True)}")
+        lines.append(f"  블랙아웃녹화={getattr(e,'blackout_rec_enabled',True)}"
+                     f"  밝기임계값={getattr(e,'brightness_threshold',30)}")
+
+        # TC 설정
+        tc_id = getattr(e, 'tc_id', '') or ''
+        if tc_id:
+            lines.append(f"  TC-ID={tc_id}"
+                         f" TC녹화={getattr(e,'tc_rec_enabled',False)}"
+                         f" TC수동녹화={getattr(e,'tc_manual_enabled',False)}")
+
+        # ── 3. 전원 제어 상태 ────────────────────────────────────────────
+        pwr = self._power
+        if pwr:
+            conn = getattr(pwr, 'is_connected', False)
+            port = getattr(pwr, 'port', '')
+            lines.append(f"\n【전원 제어】연결={'✅ ' + port if conn else '❌ 미연결'}")
+            if conn:
+                ch_state = getattr(pwr, '_ch_state', {})
+                st = " / ".join(
+                    f"{ch.upper()}={'ON' if v else 'OFF'}"
+                    for ch, v in ch_state.items()
+                )
+                lines.append(f"  채널상태: {st}")
+        else:
+            lines.append("\n【전원 제어】미초기화")
+
+        # ── 4. CAN 상태 + 신호 목록 ─────────────────────────────────────
+        if can:
+            can_conn = getattr(can, 'connected', False)
+            canoe = getattr(can, 'canoe_mode', False)
+            lines.append(f"\n【CAN】연결={'✅' if can_conn else '❌'}"
+                         f" CANoe모드={canoe}")
+            # DBC 로드된 신호 목록 (최대 40개, 이름만)
+            all_sigs = getattr(can, '_all_sigs_ref', None) or []
+            if all_sigs:
+                sig_names = [s['name'] for s in all_sigs[:40]]
+                lines.append(f"  로드된신호({len(all_sigs)}개 중 앞40개): "
+                              + ", ".join(sig_names))
+                if len(all_sigs) > 40:
+                    lines.append(f"  ... 외 {len(all_sigs)-40}개 (can_read_all로 전체 조회 가능)")
+            # 최근 캐시값
+            sig_cache = getattr(can, 'sig_cache', {})
+            if sig_cache:
+                recent = list(sig_cache.items())[-10:]  # 최근 10개
+                lines.append("  최근캐시값(최대10): " + ", ".join(
+                    f"{k}={v[1]}" for k, v in recent if v[1] is not None))
+        else:
+            lines.append("\n【CAN】미초기화")
+
+        # ── 5. 타이머 상태 ───────────────────────────────────────────────
+        timer_state = getattr(e, '_timer_state_cache', None)
+        if timer_state:
+            lines.append(f"\n【타이머】실행중={timer_state.get('running',False)}"
+                         f" 경과={timer_state.get('elapsed_str','00:00:00.000')}")
+        else:
+            lines.append("\n【타이머】상태 미확인 (timer_state_cache 없음)")
+
+        # ── 6. Layer 1 장기기억 (압축 요약) ────────────────────────────
+        if self._long_term_summary:
+            lines.append(
+                f"\n【AI 장기기억 (이전 대화 압축 요약)】\n"
+                f"{self._long_term_summary}")
+
+        # ── 7. user_notes (ai_knowledge.json) ───────────────────────────
+        try:
+            knowledge_path = self._knowledge_path()
+            if os.path.isfile(knowledge_path):
+                with open(knowledge_path, 'r', encoding='utf-8') as f:
+                    kdata = json.load(f)
+                notes = kdata.get("user_notes", "")
+                if notes and "※ 이 섹션에" not in notes and len(notes.strip()) > 10:
+                    lines.append(
+                        f"\n【사용자 추가 교육 내용 (ai_knowledge.json)】\n"
+                        f"{notes[:600]}")
+        except Exception:
+            pass
+
+        # ── 8. 누락 기능 명세 추가 ─────────────────────────────────────
+        lines.append("""
+【추가 기능 — AI 제어 가능】
+타이머 제어:
+  {"action":"timer_start"}               — 타이머 수동 시작
+  {"action":"timer_stop"}                — 타이머 수동 종료
+  {"action":"timer_reset"}               — 타이머 리셋
+  {"action":"timer_lap"}                 — 랩 기록
+  {"action":"timer_status"}              — 타이머 현재 상태 조회
+
+ROI NO→REC 제어:
+  {"action":"roi_set_no_rec","roi":1,"source":"screen","enabled":true}  — ROI별 NO시 자동녹화 ON/OFF
+  {"action":"roi_set_cond","roi":1,"source":"screen","cond_value":"2"}  — ROI 비교 조건값 설정
+  {"action":"roi_no_count","source":"screen"}                           — 전체 ROI NO 발생 횟수 조회
+  {"action":"roi_open_folder","roi":1}                                  — ROI NO→REC 저장폴더 열기
+
+블랙아웃 제어:
+  {"action":"blackout_set_threshold","value":30}  — 밝기 임계값 설정
+  {"action":"blackout_set_enabled","enabled":true} — 블랙아웃 녹화 ON/OFF
+
+OCR / 밝기 제어 (소스별):
+  {"action":"ocr_set","source":"screen","enabled":true}    — Display OCR ON/OFF
+  {"action":"ocr_set","source":"camera","enabled":false}   — Camera OCR ON/OFF
+  {"action":"brightness_set","source":"screen","enabled":true}  — Display 밝기 ON/OFF
+  {"action":"brightness_set","source":"camera","enabled":true}  — Camera 밝기 ON/OFF
+
+커널 제어:
+  {"action":"kernel_run_all"}   — 커널 전체 스크립트 실행
+  {"action":"kernel_stop"}      — 커널 실행 중지
+  {"action":"kernel_status"}    — 커널 실행 상태 조회
+""")
+
+        return "\n".join(lines)
 
     def set_provider(self, provider: str, model: str, api_key: str):
         """제공자/모델/키 설정 및 연결 테스트."""
@@ -7462,7 +8034,17 @@ class AIChatController(QObject):
     def is_ready(self): return self._client is not None
 
     def clear_history(self):
-        with self._lock: self._history.clear()
+        """단기 히스토리만 삭제. 장기기억(long_term_summary)은 유지."""
+        with self._lock:
+            self._history.clear()
+
+    def clear_all_memory(self):
+        """단기 히스토리 + 장기기억 모두 초기화."""
+        with self._lock:
+            self._history.clear()
+        self._long_term_summary = ""
+        self._long_term_tokens  = 0
+        self._save_long_term_memory()
 
     def send(self, user_text: str):
         if not self.is_ready:
@@ -7475,22 +8057,51 @@ class AIChatController(QObject):
 
     def _process(self, user_text: str):
         """
-        AI 응답 처리 — 다중 JSON 액션 시퀀스 지원.
-        LLM이 {"action":"kernel.wait","seconds":4} {"action":"start_recording"}
-        처럼 여러 JSON을 반환할 때 순서대로 실행.
-        kernel.wait 액션은 백그라운드 스레드에서 실제 대기.
+        AI 응답 처리 — 3-레이어 메모리 + 토큰 압력 감지.
+
+        토큰 압력 초과 시:
+          · WARN 임계값 초과 → 사용자에게 경고 메시지
+          · COMPRESS 임계값 초과 → 히스토리 자동 압축 후 계속
         """
         import json as _j, re as _re
         with self._lock:
             self._history.append({"role": "user", "parts": [user_text]})
-            history_copy = list(self._history[-20:])
+            history_copy = list(self._history[-12:])
+
+        # ── 동적 프롬프트 생성 (Layer 2) ──────────────────────────────
+        sys_prompt = self._build_sys_prompt()
+
+        # ── 토큰 압력 체크 ─────────────────────────────────────────────
+        token_est = self._check_token_pressure(sys_prompt, history_copy)
+        self._last_token_est = token_est
+        warn_msg = ""
+
+        if token_est >= self._TOKEN_COMPRESS:
+            # 자동 압축: 히스토리 → 장기기억
+            self.reply_ready.emit(
+                f"⚠️ 대화 기록이 누적되어 응답이 지체될 수 있습니다 "
+                f"(추정 {token_est}토큰). 이전 대화를 자동 압축합니다…", False)
+            self._compress_history_to_long_term()
+            # 압축 후 히스토리 재구성
+            with self._lock:
+                self._history.append({"role": "user", "parts": [user_text]})
+                history_copy = list(self._history[-12:])
+            sys_prompt = self._build_sys_prompt()  # 장기기억 반영된 프롬프트 재생성
+            token_est  = self._check_token_pressure(sys_prompt, history_copy)
+
+        elif token_est >= self._TOKEN_WARN:
+            warn_msg = (
+                f"\n\n💡 (대화 기록이 쌓여 응답이 다소 느릴 수 있습니다 — "
+                f"추정 {token_est}토큰. 대화가 더 쌓이면 자동 압축됩니다.)"
+            )
+
         try:
             if self._provider == "groq":
-                raw = self._call_groq(history_copy, user_text)
+                raw = self._call_groq_with_prompt(sys_prompt, history_copy, user_text)
             elif self._provider == "gemini":
-                raw = self._call_gemini(history_copy, user_text)
+                raw = self._call_gemini_with_prompt(sys_prompt, history_copy, user_text)
             elif self._provider == "claude":
-                raw = self._call_claude(history_copy, user_text)
+                raw = self._call_claude_with_prompt(sys_prompt, history_copy, user_text)
             else:
                 raw = ""
         except Exception as ex:
@@ -7522,9 +8133,10 @@ class AIChatController(QObject):
 
         if not cmds:
             # JSON 없으면 그냥 텍스트 응답
+            reply = raw + warn_msg
             with self._lock:
                 self._history.append({"role": "model", "parts": [raw]})
-            self.reply_ready.emit(raw, False)
+            self.reply_ready.emit(reply, False)
             return
 
         # ── 시퀀스 실행 (백그라운드 스레드에서 대기 포함) ─────────────────
@@ -7535,14 +8147,11 @@ class AIChatController(QObject):
             for cmd in cmds:
                 action = cmd.get("action", "")
                 if action == "kernel.wait":
-                    # 실제 대기
                     secs = float(cmd.get("seconds", cmd.get("sec", 1)))
-                    self.reply_ready.emit(
-                        f"⏳ {secs}초 대기 중…", False)
+                    self.reply_ready.emit(f"⏳ {secs}초 대기 중…", False)
                     _tm.sleep(secs)
                     results.append(f"⏱ {secs}초 대기 완료")
                 elif action == "engine.start_recording":
-                    # engine.start_recording() 직접 호출 별칭
                     r = self._execute({"action": "start_recording"})
                     results.append(r)
                 elif action == "engine.stop_recording":
@@ -7552,7 +8161,7 @@ class AIChatController(QObject):
                     r = self._execute(cmd)
                     results.append(r)
 
-            reply = "\n".join(str(r) for r in results if r)
+            reply = "\n".join(str(r) for r in results if r) + warn_msg
             with self._lock:
                 self._history.append({"role": "model", "parts": [reply]})
             self.reply_ready.emit(reply, False)
@@ -7560,18 +8169,15 @@ class AIChatController(QObject):
         if len(cmds) == 1 and cmds[0].get("action") not in ("kernel.wait",
                                                               "engine.start_recording",
                                                               "engine.stop_recording"):
-            # 단일 즉시 액션 — 스레드 불필요
-            reply = self._execute(cmds[0])
+            reply = self._execute(cmds[0]) + warn_msg
             with self._lock:
                 self._history.append({"role": "model", "parts": [reply]})
             self.reply_ready.emit(reply, False)
         else:
-            # 다중 액션 또는 wait 포함 — 백그라운드 스레드
-            _th.Thread(target=_run_sequence, daemon=True,
-                       name="AI_SEQ").start()
+            _th.Thread(target=_run_sequence, daemon=True, name="AI_SEQ").start()
 
-    def _call_groq(self, history, user_text):
-        msgs = [{"role": "system", "content": _SYS}]
+    def _call_groq_with_prompt(self, sys_prompt, history, user_text):
+        msgs = [{"role": "system", "content": sys_prompt}]
         for h in history[:-1]:
             role    = "user" if h.get("role") == "user" else "assistant"
             parts   = h.get("parts", [])
@@ -7582,11 +8188,11 @@ class AIChatController(QObject):
             model=self._model,
             messages=msgs,
             temperature=0.1,
-            max_tokens=512,
+            max_tokens=256,
         )
         return resp.choices[0].message.content.strip()
 
-    def _call_gemini(self, history, user_text):
+    def _call_gemini_with_prompt(self, sys_prompt, history, user_text):
         contents = []
         for h in history[:-1]:
             role  = "user" if h.get("role") == "user" else "model"
@@ -7604,14 +8210,14 @@ class AIChatController(QObject):
             model=self._model,
             contents=contents,
             config=_genai.types.GenerateContentConfig(
-                system_instruction=_SYS,
+                system_instruction=sys_prompt,
                 temperature=0.1,
-                max_output_tokens=512,
+                max_output_tokens=256,
             ),
         )
         return resp.text.strip()
 
-    def _call_claude(self, history, user_text):
+    def _call_claude_with_prompt(self, sys_prompt, history, user_text):
         msgs = []
         for h in history[:-1]:
             role  = "user" if h.get("role") == "user" else "assistant"
@@ -7621,11 +8227,19 @@ class AIChatController(QObject):
         msgs.append({"role": "user", "content": user_text})
         resp = self._client.messages.create(
             model=self._model,
-            max_tokens=512,
-            system=_SYS,
+            max_tokens=256,
+            system=sys_prompt,
             messages=msgs,
         )
         return resp.content[0].text.strip()
+
+    # 하위 호환용 (직접 호출 시 자동으로 프롬프트 빌드)
+    def _call_groq(self, history, user_text):
+        return self._call_groq_with_prompt(self._build_sys_prompt(), history, user_text)
+    def _call_gemini(self, history, user_text):
+        return self._call_gemini_with_prompt(self._build_sys_prompt(), history, user_text)
+    def _call_claude(self, history, user_text):
+        return self._call_claude_with_prompt(self._build_sys_prompt(), history, user_text)
 
     def _execute(self, cmd: dict) -> str:
         a = cmd.get("action", "")
@@ -7674,6 +8288,48 @@ class AIChatController(QObject):
                             f"  저장 경로: {e.output_dir}\n"
                             f"  ※ {pre+post}초 후 파일이 생성됩니다.")
                 return "⚠️ 수동 클립 저장 실패 (이미 진행 중이거나 버퍼 없음)"
+
+            # ★ [문제2 수정] set_manual_clip_time — 설정만 변경, 녹화 절대 실행 안 함
+            # 시스템 프롬프트에 이 액션이 없었기 때문에 AI가 manual_clip으로 대체 실행했던 버그.
+            # before/after 값만 engine에 적용하고, UI 스핀박스도 동기화 후 DB 저장.
+            elif a == "set_manual_clip_time":
+                before = float(cmd.get("before", cmd.get("pre",  getattr(e, "manual_pre_sec",  10.0))))
+                after  = float(cmd.get("after",  cmd.get("post", getattr(e, "manual_post_sec", 10.0))))
+                # 범위 방어 (0~300초)
+                before = max(0.0, min(before, 300.0))
+                after  = max(0.0, min(after,  300.0))
+                e.manual_pre_sec  = before
+                e.manual_post_sec = after
+                # UI 스핀박스 동기화 (있을 때만)
+                try:
+                    mp = getattr(self, '_manual_clip_panel', None)
+                    if mp is None:
+                        # MainWindow에서 패널 참조 탐색
+                        for w in self.__class__.__mro__:
+                            break
+                        import gc
+                        for obj in gc.get_referrers(e):
+                            if hasattr(obj, '_manual_clip_panel'):
+                                mp = obj._manual_clip_panel
+                                break
+                    if mp and hasattr(mp, 'pre_spin'):
+                        mp.pre_spin.setValue(before)
+                    if mp and hasattr(mp, 'post_spin'):
+                        mp.post_spin.setValue(after)
+                except Exception:
+                    pass
+                # DB 동기화 (1초 디바운스 타이머 경유)
+                try:
+                    db = getattr(self, '_db', None) or getattr(e, '_db', None)
+                    if db:
+                        db.set("manual_pre_sec",  str(before))
+                        db.set("manual_post_sec", str(after))
+                except Exception:
+                    pass
+                return (f"✅ 수동녹화 시간 설정 완료\n"
+                        f"  앞(before): {before}초\n"
+                        f"  뒤(after):  {after}초\n"
+                        f"  ※ 녹화는 실행하지 않았습니다.")
 
             elif a == "start_ac":
                 if not getattr(e, "output_dir", ""):
@@ -7794,7 +8450,7 @@ class AIChatController(QObject):
                 ch = str(cmd.get("channel","")).lower()
                 if not ch:
                     return ("⚠️ 채널을 지정해주세요.\n"
-                            "사용 가능: bplus(B+), tg_bplus(TG B+), acc(ACC), ign(IGN)")
+                            "사용 가능: bplus(B+), tg_bplus(TG B+), acc(ACC), ign(IGN), plbm_real(PLBM 실물), plbm_sim(PLBM 모사)")
                 if k:
                     conn = getattr(k, "power_connected", False)
                     if not conn:
@@ -7811,7 +8467,7 @@ class AIChatController(QObject):
                 ch = str(cmd.get("channel","")).lower()
                 if not ch:
                     return ("⚠️ 채널을 지정해주세요.\n"
-                            "사용 가능: bplus(B+), tg_bplus(TG B+), acc(ACC), ign(IGN)")
+                            "사용 가능: bplus(B+), tg_bplus(TG B+), acc(ACC), ign(IGN), plbm_real(PLBM 실물), plbm_sim(PLBM 모사)")
                 if k:
                     conn = getattr(k, "power_connected", False)
                     if not conn:
@@ -7952,9 +8608,167 @@ class AIChatController(QObject):
                 pv   = self._provider.upper()
                 pwr  = "연결됨" if (k and getattr(k,"power_connected",False)) else "미연결"
                 can  = self._can.info()
+                timer_st = getattr(e, '_timer_state_cache', {})
+                timer_str = (f"실행중({timer_st.get('elapsed_str','?')})"
+                             if timer_st.get('running') else "정지")
+                mem_tok = self._last_token_est
                 return (f"📊 상태\n  녹화: {st}\n  경로: {pth}\n"
-                        f"  매크로: {mac}\n  AI: {pv}/{self._model}\n"
+                        f"  매크로: {mac}\n  타이머: {timer_str}\n"
+                        f"  AI: {pv}/{self._model}  추정토큰:{mem_tok}\n"
+                        f"  장기기억: {self._long_term_tokens}토큰 누적\n"
                         f"  전원: {pwr}\n  CAN: {can}")
+
+            # ── 타이머 액션 ─────────────────────────────────────────────────
+            elif a == "timer_start":
+                t = getattr(e, '_timer_panel_ref', None)
+                if t and hasattr(t, '_manual_start'):
+                    t._manual_start(); return "✅ 타이머 시작"
+                return "⚠️ 타이머 패널 미연결 (프로그램 재시작 필요)"
+
+            elif a == "timer_stop":
+                t = getattr(e, '_timer_panel_ref', None)
+                if t and hasattr(t, '_manual_stop'):
+                    t._manual_stop(); return "✅ 타이머 종료"
+                return "⚠️ 타이머 패널 미연결"
+
+            elif a == "timer_reset":
+                t = getattr(e, '_timer_panel_ref', None)
+                if t and hasattr(t, '_reset'):
+                    t._reset(); return "✅ 타이머 리셋"
+                return "⚠️ 타이머 패널 미연결"
+
+            elif a == "timer_lap":
+                t = getattr(e, '_timer_panel_ref', None)
+                if t and hasattr(t, '_record_lap'):
+                    t._record_lap(); return "✅ 랩 기록"
+                return "⚠️ 타이머 패널 미연결"
+
+            elif a == "timer_status":
+                ts = getattr(e, '_timer_state_cache', {})
+                if not ts:
+                    return "⚠️ 타이머 상태 없음"
+                return (f"⏱ 타이머\n  실행중={ts.get('running',False)}\n"
+                        f"  경과={ts.get('elapsed_str','00:00:00.000')}\n"
+                        f"  랩수={ts.get('lap_count',0)}")
+
+            # ── ROI NO→REC 제어 ─────────────────────────────────────────────
+            elif a == "roi_set_no_rec":
+                roi_idx = int(cmd.get("roi", 1)) - 1
+                src     = cmd.get("source", "screen")
+                enabled = bool(cmd.get("enabled", True))
+                rois = (e.screen_rois if src == "screen" else e.camera_rois) or []
+                if not 0 <= roi_idx < len(rois):
+                    return f"⚠️ ROI {roi_idx+1}번이 없습니다 (현재 {len(rois)}개)"
+                rois[roi_idx].roi_no_rec_enabled = enabled
+                return (f"✅ ROI {roi_idx+1} NO→REC "
+                        f"{'활성화' if enabled else '비활성화'}")
+
+            elif a == "roi_set_cond":
+                roi_idx = int(cmd.get("roi", 1)) - 1
+                src     = cmd.get("source", "screen")
+                cond    = str(cmd.get("cond_value", ""))
+                rois = (e.screen_rois if src == "screen" else e.camera_rois) or []
+                if not 0 <= roi_idx < len(rois):
+                    return f"⚠️ ROI {roi_idx+1}번이 없습니다"
+                rois[roi_idx].cond_value = cond
+                return f"✅ ROI {roi_idx+1} 비교조건 설정: {cond!r}"
+
+            elif a == "roi_no_count":
+                src  = cmd.get("source", "screen")
+                rois = (e.screen_rois if src == "screen" else e.camera_rois) or []
+                lines_r = [f"  ROI {i+1} ({r.label()}): NO×{r.no_match_count}"
+                           for i, r in enumerate(rois)]
+                return "📊 NO 발생 횟수\n" + ("\n".join(lines_r) or "  등록된 ROI 없음")
+
+            elif a == "roi_open_folder":
+                try:
+                    p = e._build_path("manual")
+                    while p and not os.path.exists(p) and p != os.path.dirname(p):
+                        p = os.path.dirname(p)
+                    open_folder(p or e.base_dir)
+                    return "✅ 저장 폴더 열기"
+                except Exception as ex:
+                    return f"❌ 폴더 열기 실패: {ex}"
+
+            # ── 블랙아웃 제어 ────────────────────────────────────────────────
+            elif a == "blackout_set_threshold":
+                val = float(cmd.get("value", 30))
+                e.brightness_threshold = val
+                return f"✅ 블랙아웃 임계값 설정: {val}"
+
+            elif a == "blackout_set_enabled":
+                enabled = bool(cmd.get("enabled", True))
+                e.blackout_rec_enabled = enabled
+                return f"✅ 블랙아웃 녹화 {'활성화' if enabled else '비활성화'}"
+
+            # ── OCR / 밝기 제어 ──────────────────────────────────────────────
+            elif a == "ocr_set":
+                src     = cmd.get("source", "screen")
+                enabled = bool(cmd.get("enabled", True))
+                if src == "screen":
+                    e.ocr_screen_enabled = enabled
+                    e.ocr_enabled = enabled
+                else:
+                    e.ocr_camera_enabled = enabled
+                return f"✅ {src} OCR {'ON' if enabled else 'OFF'}"
+
+            elif a == "brightness_set":
+                src     = cmd.get("source", "screen")
+                enabled = bool(cmd.get("enabled", True))
+                if src == "screen":
+                    e.brightness_screen_enabled = enabled
+                else:
+                    e.brightness_camera_enabled = enabled
+                e.brightness_enabled = (
+                    getattr(e,'brightness_screen_enabled',True) or
+                    getattr(e,'brightness_camera_enabled',True))
+                return f"✅ {src} 밝기 {'ON' if enabled else 'OFF'}"
+
+            # ── 커널 제어 ────────────────────────────────────────────────────
+            elif a == "kernel_run_all":
+                if k is None:
+                    return "⚠️ KernelEngine 미연결"
+                if k.running:
+                    return "⚠️ 커널이 이미 실행 중입니다"
+                k.start(list(k.scripts))
+                return f"✅ 커널 전체 실행 ({len(k.scripts)}개 스크립트)"
+
+            elif a == "kernel_stop":
+                if k is None:
+                    return "⚠️ KernelEngine 미연결"
+                k.stop(); return "✅ 커널 실행 중지"
+
+            elif a == "kernel_status":
+                if k is None:
+                    return "⚠️ KernelEngine 미연결"
+                return (f"🧠 커널\n  실행중={k.running}\n"
+                        f"  현재스크립트={k.cur_title or '없음'}\n"
+                        f"  스크립트수={len(k.scripts)}")
+
+            # ── AI 메모리 제어 ───────────────────────────────────────────────
+            elif a == "memory_status":
+                return (f"🧠 AI 메모리\n"
+                        f"  단기히스토리: {len(self._history)}개 항목\n"
+                        f"  장기기억: {self._long_term_tokens}토큰\n"
+                        f"  마지막요청 추정토큰: {self._last_token_est}\n"
+                        f"  경고임계값: {self._TOKEN_WARN}토큰\n"
+                        f"  압축임계값: {self._TOKEN_COMPRESS}토큰")
+
+            elif a == "memory_compress":
+                self._compress_history_to_long_term()
+                return (f"✅ 히스토리 압축 완료\n"
+                        f"  장기기억: {self._long_term_tokens}토큰")
+
+            elif a == "memory_clear":
+                with self._lock:
+                    self._history.clear()
+                return "✅ 단기 히스토리 초기화"
+
+            elif a == "can_devices":
+                devs = _can_manager.get_vector_devices()
+                if not devs: return "⚠️ Vector 장비 없음"
+                out = "\n".join(f"  {d['name']} [{d['type']}]" for d in devs)
+                return f"🔌 Vector 장비 {len(devs)}개:\n" + out
 
             elif a == "chat":
                 return str(cmd.get("message",""))
@@ -8117,6 +8931,14 @@ class CanMonitorDialog(QDialog):
         self._graph_paused:   bool = False  # 일시정지 플래그
         self._graph_y_zoom:   float = 1.0   # Y축 확대 배율 (Ctrl+휠)
         self._graph_drag_x:   int = 0     # 드래그 시작 X 좌표
+        # [문제2] 드래그 모드 분리
+        # · 기본: 드래그 → X/Y pan (과거 탐색)
+        # · measure 모드 ON: 드래그 → 구간 시간 표시 (pan 비활성)
+        self._measure_mode:   bool = False  # 구간 측정 모드
+        self._drag_measuring: bool = False  # 현재 드래그 측정 중
+        self._drag_start_px:  int  = 0     # 측정 드래그 시작 X
+        self._drag_cur_px:    int  = 0     # 측정 드래그 현재 X
+        self._drag_start_ts:  float = 0.0  # 측정 시작 타임스탬프
 
         self.setWindowTitle("📡  CAN Monitor — 신호 모니터 / CAN 입출력")
         self.setWindowModality(Qt.NonModal)
@@ -8214,7 +9036,8 @@ class CanMonitorDialog(QDialog):
 
         # 그래프 업데이트 타이머 (250ms)
         self._graph_timer = QTimer(self)
-        self._graph_timer.setInterval(100)
+        # [문제1] 그래프 갱신 타이머: 100ms → 50ms (CAN 20ms 폴링과 적절히 맞춤)
+        self._graph_timer.setInterval(50)
         self._graph_timer.timeout.connect(self._update_graph)
         self._graph_timer.start()
 
@@ -8389,7 +9212,10 @@ class CanMonitorDialog(QDialog):
         self._graph_w.mouseReleaseEvent= self._on_graph_mouse_release
         self._graph_w.setCursor(Qt.OpenHandCursor)
         gi = QVBoxLayout(self._graph_w); gi.setContentsMargins(0,0,0,0)
-        self._graph_hint = QLabel("신호를 추가하면 실시간 그래프가 표시됩니다\n(휠: 시간 범위 확대/축소)")
+        self._graph_hint = QLabel(
+            "신호를 추가하면 실시간 그래프가 표시됩니다\n"
+            "휠: 시간 범위 확대/축소  |  Ctrl+휠: Y축 확대/축소\n"
+            "드래그: 과거 탐색(pan)  |  [📏 구간 측정 ON] 후 드래그: 두 지점 간 시간 측정")
         self._graph_hint.setAlignment(Qt.AlignCenter)
         self._graph_hint.setStyleSheet("color:#223;font-size:12px;")
         gi.addWidget(self._graph_hint)
@@ -8423,7 +9249,24 @@ class CanMonitorDialog(QDialog):
             "border-color:#5a2a2a;}"
             "QPushButton:hover{background:#22334a;}")
         self._pause_btn.clicked.connect(self._on_graph_pause)
+
+        # [문제2] 구간 측정 모드 버튼 — ON시 드래그=구간시간, OFF시 드래그=pan
+        self._measure_btn = QPushButton("📏 구간 측정 OFF")
+        self._measure_btn.setFixedHeight(26)
+        self._measure_btn.setCheckable(True)
+        self._measure_btn.setToolTip(
+            "ON: 드래그로 두 지점 간 시간 측정\n"
+            "OFF: 드래그로 그래프 과거 탐색 (pan)")
+        self._measure_btn.setStyleSheet(
+            "QPushButton{background:#1a1a3a;color:#7bc8e0;"
+            "border:1px solid #2a3a5a;border-radius:4px;font-size:10px;}"
+            "QPushButton:checked{background:#1a3a1a;color:#ffdd88;"
+            "border-color:#4a6a1a;font-weight:bold;}"
+            "QPushButton:hover{background:#22224a;}")
+        self._measure_btn.toggled.connect(self._on_measure_mode_toggled)
+
         gc.addWidget(self._pause_btn)
+        gc.addWidget(self._measure_btn)
         gc.addStretch(); gc.addWidget(clr_btn)
         rv.addLayout(gc)
 
@@ -8808,7 +9651,10 @@ class CanMonitorDialog(QDialog):
     # ── 그래프 ────────────────────────────────────────────────────────────────
     _COLORS  = ['#378ADD', '#1D9E75', '#D85A30', '#BA7517',
                 '#D4537E', '#8B5CF6', '#639922', '#E24B4A']
-    _MAX_PTS = 6000  # 10분 @ 0.1초 단위 (휠로 1/100배 축소 시 최대 표시)
+    # [문제1] 3분 × 50samples/s = 9000pts (그래프 흘러가는 창)
+    # → 사용자에게 보이는 건 zoom_pts(기본 200=20초)이며,
+    #   전체 9000pts는 백버퍼로 유지해 드래그로 과거 탐색 가능
+    _MAX_PTS = 9000   # 3분치 보관 @ 20ms 폴링
 
     def _add_to_graph(self):
         row = self._sig_table.currentRow()
@@ -8823,12 +9669,15 @@ class CanMonitorDialog(QDialog):
         # ★ _ev_ptr을 현재 이벤트 리스트 끝으로 설정 → 추가 시점 이후 데이터만 표시
         ev_key = f"_EV_{sig['name']}"
         ev_now = self._can.sig_cache.get(ev_key)
-        ev_ptr_init = len(ev_now) if isinstance(ev_now, list) else 0
+        # 신호 추가 시점의 타임스탬프 커서 초기화 (이 이후 데이터만 표시)
+        import time as _t_add
+        ev_ts_init = (ev_now[-1][0] if isinstance(ev_now, list) and ev_now
+                      else _t_add.time())
         self._watched.append({
             'name': sig['name'], 'msg': sig['msg'],
             'unit': sig['unit'], 'color': color,
             'data': [], 'labels': [],
-            '_ev_ptr': ev_ptr_init})  # 현재 시점부터 기록 시작
+            '_ev_ts_cursor': ev_ts_init})  # 타임스탬프 기반 커서
         # CANoe 폴링 등록 (연결된 경우)
         if self._can.connected:
             self._can.add_poll_signal(sig['name'], sig['msg'])
@@ -8969,11 +9818,19 @@ class CanMonitorDialog(QDialog):
 
     def _update_graph(self):
         """
-        100ms 타이머 — _EV_ 이벤트 로그 기반 그래프 업데이트.
-        ★ 값이 변화한 순간만 점으로 기록 (폴링 주기 무관).
+        50ms 타이머 — sig_cache 기반 그래프 업데이트.
+
+        [문제2/3 근본 수정]
+        _ev_ptr(인덱스 기반)는 ev_list가 del 삭제될 때 오염되어
+        신규 이벤트를 영원히 못 읽는 버그가 있었다.
+
+        → 타임스탬프 기반 커서(_ev_ts_cursor)로 교체:
+          "마지막으로 처리한 ts 이후의 이벤트만 읽는다."
+          리스트 앞부분이 삭제되어도 ts는 절대값이므로 오염 없음.
         """
         if not self._watched: return
         changed = False
+
         for w in self._watched:
             sig_name = w['name']
 
@@ -8987,43 +9844,49 @@ class CanMonitorDialog(QDialog):
                 self._log(f"[Graph] ❌ {sig_name}: {err_entry[1]}")
                 w['_err_logged'] = True
 
-            # ★ 이벤트 로그에서 새로운 값 변화만 그래프에 추가
+            # ── 타임스탬프 커서 방식으로 신규 이벤트 추출 ────────────────
             ev_list = self._can.sig_cache.get(f"_EV_{sig_name}")
             if isinstance(ev_list, list) and ev_list:
-                ptr = w.get('_ev_ptr', 0)
-                new_events = ev_list[ptr:]
+                # 마지막으로 처리한 타임스탬프 (초기값: 신호 추가 시점)
+                last_ts = w.get('_ev_ts_cursor', 0.0)
+                # last_ts 이후 항목만 추출 (ev_list는 시간순 정렬)
+                new_events = [(ts, v) for ts, v in ev_list if ts > last_ts]
                 if new_events:
                     w.pop('_err_logged', None)
                     for ts, val in new_events:
                         if val is not None:
                             w['data'].append(val)
                             w['labels'].append(ts)
-                    w['_ev_ptr'] = len(ev_list)
+                    # 커서를 가장 최신 ts로 전진
+                    w['_ev_ts_cursor'] = new_events[-1][0]
                     # MAX_PTS 초과 정리
                     if len(w['data']) > self._MAX_PTS:
                         excess = len(w['data']) - self._MAX_PTS
-                        w['data']   = w['data'][excess:]
-                        w['labels'] = w['labels'][excess:]
-                        w['_ev_ptr'] = max(0, w['_ev_ptr'] - excess)
+                        del w['data'][:excess]
+                        del w['labels'][:excess]
                     changed = True
             else:
-                # 이벤트 없으면 폴링 폴백 (처음 연결 시 등)
+                # ev_list 없으면 sig_cache 직접 폴백
                 entry = self._can.sig_cache.get(sig_name)
                 if entry:
                     ts, val = entry
                     if val is not None:
-                        w.pop('_err_logged', None)
-                        if not w['labels'] or abs(ts - w['labels'][-1]) > 0.08:
+                        last_ts = w.get('_ev_ts_cursor', 0.0)
+                        if ts > last_ts:
+                            w.pop('_err_logged', None)
                             w['data'].append(val)
                             w['labels'].append(ts)
+                            w['_ev_ts_cursor'] = ts
                             if len(w['data']) > self._MAX_PTS:
                                 w['data'].pop(0); w['labels'].pop(0)
                             changed = True
 
         if changed:
             self._update_chip_text()
-            if not self._graph_paused:
-                self._draw_graph()
+        # [문제1] 확대/축소 후 현재값 미반영 수정:
+        # changed 여부와 관계없이 일시정지가 아니면 항상 그래프 갱신
+        if not self._graph_paused and self._watched:
+            self._draw_graph()
 
 
     def _draw_graph(self):
@@ -9040,7 +9903,7 @@ class CanMonitorDialog(QDialog):
 
         pix = QPixmap(gw, gh); pix.fill(QColor("#03030a"))
         p = QPainter(pix); p.setRenderHint(QPainter.Antialiasing)
-        PL, PR, PT, PB = 60, 12, 24, 36
+        PL, PR, PT, PB = 60, 40, 24, 36  # PR 확장: 오른쪽 레이블 잘림 방지
         gw2 = gw - PL - PR; gh2 = gh - PT - PB
 
         # ── 표시 범위 ────────────────────────────────────────────────────────
@@ -9188,10 +10051,12 @@ class CanMonitorDialog(QDialog):
                     ts_s = _dt.fromtimestamp(tv).strftime("%H:%M:%S.") + f"{_dt.fromtimestamp(tv).microsecond // 100000}"
                 else:
                     ts_s = f"-{offset:.1f}s"
-                p.setPen(QPen(QColor("#556"), 1))
+                p.setPen(QPen(QColor("#6699aa"), 1))
                 p.setFont(QFont("Consolas", 7))
-                p.drawText(xp - 28, PT + gh2 + 4, 56, 16,
-                           0x0004, ts_s)
+                if i == n_vgrid:
+                    p.drawText(xp - 55, PT + gh2 + 4, 55, 16, 0x0001, ts_s)
+                else:
+                    p.drawText(xp - 28, PT + gh2 + 4, 56, 16, 0x0004, ts_s)
 
         # ── 상태 표시 ────────────────────────────────────────────────────────
         zoom_sec = zoom_pts * 0.1
@@ -9202,6 +10067,48 @@ class CanMonitorDialog(QDialog):
         p.setPen(QPen(QColor("#445"), 1))
         p.setFont(QFont("Consolas", 7))
         p.drawText(PL, PT - 2, gw2, 12, 0x0002, info)
+
+        # ── 구간 시간 측정 오버레이 (measure_mode ON일 때만) ────────────────
+        # [문제2] measure_mode가 ON이고 두 지점이 설정된 경우에만 표시
+        if (self._measure_mode and
+                self._drag_start_px and
+                abs(self._drag_cur_px - self._drag_start_px) > 3):
+            x1  = self._drag_start_px
+            x2  = self._drag_cur_px
+            ts1 = self._px_to_time(x1)
+            ts2 = self._px_to_time(x2)
+            dt  = abs(ts2 - ts1)
+            rx  = min(x1, x2); rw = max(2, abs(x2 - x1))
+            # 구간 하이라이트 영역
+            p.setPen(QPen(QColor("#2a6a2a"), 1))
+            p.setBrush(QColor(40, 120, 40, 35))
+            p.drawRect(rx, PT, rw, gh2)
+            # 양쪽 경계선
+            p.setPen(QPen(QColor("#ffdd88"), 1))
+            p.drawLine(x1, PT, x1, PT + gh2)
+            p.drawLine(x2, PT, x2, PT + gh2)
+            # 시간 텍스트 박스
+            mid_x = (x1 + x2) // 2
+            dt_str = (f"Δ{dt:.3f}s" if dt >= 1.0
+                      else f"Δ{dt*1000:.1f}ms" if dt >= 0.001
+                      else f"Δ{dt*1000:.3f}ms")
+            box_w, box_h = 90, 24
+            bx = max(PL, min(mid_x - box_w//2, PL + gw2 - box_w))
+            by = PT + gh2//2 - box_h//2
+            p.setPen(QPen(QColor(0, 0, 0, 0), 0))
+            p.setBrush(QColor(0, 0, 0, 190))
+            p.drawRoundedRect(bx, by, box_w, box_h, 5, 5)
+            p.setPen(QPen(QColor("#ffdd88"), 1))
+            p.setFont(QFont("Consolas", 10))
+            p.drawText(bx, by, box_w, box_h, 0x0004, dt_str)
+            # 시작/끝 타임스탬프
+            from datetime import datetime as _dt2
+            p.setFont(QFont("Consolas", 7))
+            p.setPen(QPen(QColor("#aaa"), 1))
+            ts1_str = _dt2.fromtimestamp(ts1).strftime("%H:%M:%S.%f")[:12]
+            ts2_str = _dt2.fromtimestamp(ts2).strftime("%H:%M:%S.%f")[:12]
+            p.drawText(x1 - 2, PT + gh2 + 4, 80, 14, 0x0001, ts1_str)
+            p.drawText(x2 - 78, PT + gh2 + 4, 80, 14, 0x0002, ts2_str)
 
         p.end()
         self._show_pix(pix)
@@ -9233,63 +10140,136 @@ class CanMonitorDialog(QDialog):
             self._graph_y_zoom = max(0.1, min(100.0,
                                     self._graph_y_zoom * factor))
         else:
-            # 기본 휠 → X축 시간 범위
-            # X축: 1포인트(0.1초)~MAX_PTS(10분) 범위
-            step = max(1, int(self._graph_zoom_pts * 0.2))
-            if delta > 0:
-                self._graph_zoom_pts = max(1, self._graph_zoom_pts - step)
-            else:
-                self._graph_zoom_pts = min(self._MAX_PTS,
-                                           self._graph_zoom_pts + step)
-            # 휠로 X축 바꾸면 pan 오프셋도 clamp
-            max_pan = max(0, len(max(
-                (w['data'] for w in self._watched if w['data']),
-                key=len, default=[])) - self._graph_zoom_pts)
-            self._graph_pan_off = min(self._graph_pan_off, max_pan)
+            # 기본 휠 → X축 시간 범위 (마우스 위치 기준)
+            old_zoom = self._graph_zoom_pts
+            step = max(1, int(old_zoom * 0.2))
+            new_zoom = (max(1, old_zoom - step) if delta > 0
+                        else min(self._MAX_PTS, old_zoom + step))
+            # ★ 마우스 위치 기준 pan 조정
+            _PL2, _PR2 = 60, 40
+            gw2_w = max(1, self._graph_w.width() - _PL2 - _PR2)
+            mouse_frac = max(0.0, min(1.0, (event.x() - _PL2) / gw2_w))
+            mouse_pt = self._graph_pan_off + mouse_frac * old_zoom
+            new_pan = mouse_pt - mouse_frac * new_zoom
+            max_pts = max((len(w['data']) for w in self._watched if w['data']),
+                          default=0)
+            self._graph_zoom_pts = new_zoom
+            self._graph_pan_off  = max(0, min(int(new_pan),
+                                              max(0, max_pts - new_zoom)))
 
         if self._watched:
             self._draw_graph()
         event.accept()
 
-    def _on_graph_mouse_press(self, event):
-        """좌클릭 드래그 시작 — X/Y pan."""
+    def _px_to_time(self, px: int) -> float:
+        """
+        그래프 픽셀 X → 타임스탬프(초).
+        [문제2] pan_off를 반영하여 현재 화면에 보이는 데이터 구간의 시각 반환.
+        """
+        PL2, PR2 = 60, 40
+        gw2 = max(1, self._graph_w.width() - PL2 - PR2)
+        frac = max(0.0, min(1.0, (px - PL2) / gw2))
+        # 현재 보이는 슬라이스의 타임스탬프 기반
+        slice_ts = []
+        for w in self._watched:
+            lbl = w.get("labels", [])
+            n = len(lbl)
+            if n == 0:
+                continue
+            pan = self._graph_pan_off
+            zoom = self._graph_zoom_pts
+            end   = n - pan
+            start = max(0, end - zoom)
+            slice_ts.extend(lbl[start:end])
+        if len(slice_ts) < 2:
+            # fallback: 전체 범위
+            all_ts = [ts for w in self._watched for ts in w.get("labels", [])]
+            if len(all_ts) < 2:
+                return 0.0
+            t0, t1 = min(all_ts), max(all_ts)
+        else:
+            t0, t1 = min(slice_ts), max(slice_ts)
+        return t0 + frac * (t1 - t0)
+
+    def _on_measure_mode_toggled(self, on: bool):
+        """[문제2] 구간 측정 모드 ON/OFF."""
+        self._measure_mode = on
+        self._drag_measuring = False
+        self._drag_start_px  = 0
+        self._drag_cur_px    = 0
+        self._measure_btn.setText("📏 구간 측정 ON" if on else "📏 구간 측정 OFF")
+        # 커서 변경
         from PyQt5.QtCore import Qt as _Qt
-        if event.button() == _Qt.LeftButton:
-            self._graph_drag_x = event.x()
-            self._graph_drag_y = event.y()
+        self._graph_w.setCursor(
+            _Qt.CrossCursor if on else _Qt.OpenHandCursor)
+        if self._watched:
+            self._draw_graph()
+
+    def _on_graph_mouse_press(self, event):
+        """[문제2] 좌클릭 시작 — measure 모드면 측정 시작, 아니면 pan 시작."""
+        from PyQt5.QtCore import Qt as _Qt
+        if event.button() != _Qt.LeftButton:
+            return
+        if self._measure_mode:
+            # 구간 측정 시작
+            self._drag_measuring = True
+            self._drag_start_px  = event.x()
+            self._drag_cur_px    = event.x()
+            self._drag_start_ts  = self._px_to_time(event.x())
+        else:
+            # pan 모드 시작
+            self._drag_measuring = False
+            self._graph_drag_x   = event.x()
+            self._graph_drag_y   = event.y()
             self._graph_w.setCursor(_Qt.ClosedHandCursor)
 
     def _on_graph_mouse_move(self, event):
-        """좌클릭 드래그 — X(과거스크롤) + Y(상하이동) pan."""
+        """[문제2] 드래그 이동 — measure 모드면 측정 끝점 갱신, 아니면 pan."""
         from PyQt5.QtCore import Qt as _Qt
-        if not (event.buttons() & _Qt.LeftButton): return
-        dx = event.x() - self._graph_drag_x
-        dy = event.y() - getattr(self, '_graph_drag_y', event.y())
-        self._graph_drag_x = event.x()
-        self._graph_drag_y = event.y()
+        if not (event.buttons() & _Qt.LeftButton):
+            return
 
-        # X pan (시간축)
-        gw2 = max(1, self._graph_w.width() - 60 - 12)
-        pts_per_px = self._graph_zoom_pts / gw2
-        self._graph_pan_off = max(0, self._graph_pan_off - int(dx * pts_per_px))
-        max_pts = max((len(w['data']) for w in self._watched if w['data']),
-                      default=0)
-        self._graph_pan_off = min(self._graph_pan_off,
-                                  max(0, max_pts - self._graph_zoom_pts))
+        if self._measure_mode:
+            # 측정 모드: 끝점만 업데이트, pan 없음
+            self._drag_cur_px = event.x()
+        else:
+            # pan 모드: X/Y 이동
+            dx = event.x() - self._graph_drag_x
+            dy = event.y() - getattr(self, '_graph_drag_y', event.y())
+            self._graph_drag_x = event.x()
+            self._graph_drag_y = event.y()
 
-        # Y pan (값 중심 이동) — -100~+100 범위
-        gh2 = max(1, self._graph_w.height() - 24 - 36)
-        y_range = getattr(self, '_graph_y_range', 10.0)
-        val_per_px = y_range / gh2
-        self._graph_y_center = max(-100.0, min(100.0,
-            getattr(self, '_graph_y_center', 0.0) + dy * val_per_px))
+            # X pan (시간축) — 오른쪽 드래그=과거, 왼쪽 드래그=최신
+            gw2 = max(1, self._graph_w.width() - 60 - 40)
+            pts_per_px = max(0.01, self._graph_zoom_pts / gw2)
+            self._graph_pan_off = max(0,
+                self._graph_pan_off - int(dx * pts_per_px))
+            max_pts = max((len(w['data']) for w in self._watched if w['data']),
+                          default=0)
+            self._graph_pan_off = min(self._graph_pan_off,
+                                      max(0, max_pts - self._graph_zoom_pts))
 
-        if self._watched: self._draw_graph()
+            # Y pan (값 중심 이동)
+            gh2 = max(1, self._graph_w.height() - 24 - 36)
+            y_range = getattr(self, '_graph_y_range', 10.0)
+            val_per_px = y_range / gh2
+            self._graph_y_center = (
+                getattr(self, '_graph_y_center', 0.0) + dy * val_per_px)
+
+        if self._watched:
+            self._draw_graph()
 
     def _on_graph_mouse_release(self, event):
-        """드래그 종료."""
+        """[문제2] 드래그 종료."""
         from PyQt5.QtCore import Qt as _Qt
-        self._graph_w.setCursor(_Qt.OpenHandCursor)
+        if self._measure_mode:
+            # 측정 모드: 끝점 확정 (오버레이 유지)
+            self._drag_cur_px = event.x()
+        else:
+            # pan 모드 종료
+            self._graph_w.setCursor(_Qt.OpenHandCursor)
+        # 측정 드래그 플래그 해제 (오버레이는 measure_mode ON이면 계속 표시)
+        self._drag_measuring = False
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -9422,6 +10402,20 @@ class LLMChatDialog(QDialog):
         ag.addWidget(conn_btn, 3, 0, 1, 3)
         ct.addWidget(api_grp)
 
+        # 토큰/메모리 상태 표시 바
+        self._token_lbl = QLabel("🧠 메모리: 단기 0턴 | 추정 0토큰 | 장기기억 0토큰")
+        self._token_lbl.setStyleSheet(
+            "color:#446;font-size:9px;background:#03030a;"
+            "border-bottom:1px solid #1a1a2a;padding:2px 6px;font-family:monospace;")
+        self._token_lbl.setFixedHeight(18)
+        ct.addWidget(self._token_lbl)
+
+        # 메모리 상태 갱신 타이머 (3초마다)
+        self._mem_timer = QTimer(self)
+        self._mem_timer.setInterval(3000)
+        self._mem_timer.timeout.connect(self._refresh_token_lbl)
+        self._mem_timer.start()
+
         # 대화 로그
         self._log = QTextEdit(); self._log.setReadOnly(True)
         self._log.setStyleSheet(
@@ -9448,16 +10442,36 @@ class LLMChatDialog(QDialog):
         # 빠른 명령
         qg = QGroupBox("빠른 명령"); ql = QHBoxLayout(qg); ql.setSpacing(4)
         for lbl, cmd in [("⏺ 녹화","녹화 시작해줘"),("⏹ 종료","녹화 종료 PASS"),
-                          ("📸 캡처","화면 캡처해줘"),("📊 상태","현재 상태 알려줘"),
-                          ("🗑 초기화",None)]:
+                          ("🎬 수동녹화","수동녹화 저장해줘"),
+                          ("📸 캡처","화면 캡처해줘"),("📊 상태","현재 상태 알려줘")]:
             b = QPushButton(lbl); b.setFixedHeight(26)
             b.setStyleSheet(
                 "QPushButton{background:#0f1a2a;color:#aaa;"
                 "border:1px solid #1a3a5a;border-radius:3px;font-size:10px;}"
                 "QPushButton:hover{background:#1a2a3a;color:#dde;}")
-            b.clicked.connect((lambda _,c=cmd: self._quick(c)) if cmd
-                               else (lambda _: self._clear_chat()))
+            b.clicked.connect(lambda _,c=cmd: self._quick(c))
             ql.addWidget(b)
+
+        # 단기 히스토리만 초기화 (장기기억 유지)
+        clr_btn = QPushButton("🗑 대화초기화"); clr_btn.setFixedHeight(26)
+        clr_btn.setToolTip("단기 대화 기록 삭제 (장기기억은 유지됩니다)")
+        clr_btn.setStyleSheet(
+            "QPushButton{background:#0f1a2a;color:#aaa;"
+            "border:1px solid #1a3a5a;border-radius:3px;font-size:10px;}"
+            "QPushButton:hover{background:#1a2a3a;color:#dde;}")
+        clr_btn.clicked.connect(self._clear_chat)
+        ql.addWidget(clr_btn)
+
+        # 장기기억까지 완전 초기화
+        rst_btn = QPushButton("🧹 기억전체삭제"); rst_btn.setFixedHeight(26)
+        rst_btn.setToolTip("단기 대화 + 장기기억 모두 초기화")
+        rst_btn.setStyleSheet(
+            "QPushButton{background:#2a0a0a;color:#f87;"
+            "border:1px solid #5a2a2a;border-radius:3px;font-size:10px;}"
+            "QPushButton:hover{background:#3a1010;}")
+        rst_btn.clicked.connect(self._clear_all_memory)
+        ql.addWidget(rst_btn)
+
         # 📂 저장 폴더 열기 버튼
         fb = QPushButton("📂 저장폴더"); fb.setFixedHeight(26)
         fb.setStyleSheet(
@@ -9607,13 +10621,57 @@ class LLMChatDialog(QDialog):
     def _append(self, text, color):
         safe = (text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
                     .replace("\n","<br>"))
-        self._log.append(
-            f'<span style="color:{color};">{safe}</span>'
-            '<hr style="border:none;border-top:1px solid #1a1a2a;margin:4px 0;">')
+        # [수정1] 사용자 메시지(👤)는 오른쪽, AI 메시지(🤖)는 왼쪽 정렬
+        is_user = text.startswith("👤")
+        if is_user:
+            # 오른쪽 정렬: margin-left auto, 연한 배경
+            self._log.append(
+                f'<div style="text-align:right;margin-left:15%;margin-bottom:4px;">'
+                f'<span style="color:{color};background:#0d1a2a;border-radius:8px 8px 2px 8px;'
+                f'padding:4px 10px;display:inline-block;font-size:11px;">{safe}</span></div>'
+                '<hr style="border:none;border-top:1px solid #1a1a2a;margin:2px 0;">')
+        else:
+            # 왼쪽 정렬 (AI)
+            self._log.append(
+                f'<div style="text-align:left;margin-right:15%;margin-bottom:4px;">'
+                f'<span style="color:{color};background:#0a1a0a;border-radius:8px 8px 8px 2px;'
+                f'padding:4px 10px;display:inline-block;font-size:11px;">{safe}</span></div>'
+                '<hr style="border:none;border-top:1px solid #1a1a2a;margin:2px 0;">')
         sb = self._log.verticalScrollBar(); sb.setValue(sb.maximum())
 
+    def _refresh_token_lbl(self):
+        """3초마다 메모리 상태 레이블 갱신."""
+        ctrl = self._ctrl
+        hist_n   = len(ctrl._history)
+        last_tok = ctrl._last_token_est
+        lt_tok   = ctrl._long_term_tokens
+        warn = ctrl._TOKEN_WARN
+        color = "#f0c040" if last_tok >= warn else "#446"
+        self._token_lbl.setText(
+            f"🧠 단기 {hist_n}항목 | 추정 {last_tok}토큰 "
+            f"(경고>{warn}) | 장기기억 {lt_tok}토큰")
+        self._token_lbl.setStyleSheet(
+            f"color:{color};font-size:9px;background:#03030a;"
+            "border-bottom:1px solid #1a1a2a;padding:2px 6px;font-family:monospace;")
+
     def _clear_chat(self):
-        self._ctrl.clear_history(); self._log.clear()
+        """단기 대화 기록만 삭제. 장기기억(long_term_summary)은 유지."""
+        self._ctrl.clear_history()
+        self._log.clear()
+        self._append("🗑 단기 대화 기록이 초기화됐습니다. (장기기억은 유지됩니다)", "#446")
+
+    def _clear_all_memory(self):
+        """단기 히스토리 + 장기기억 모두 초기화."""
+        from PyQt5.QtWidgets import QMessageBox
+        r = QMessageBox.question(
+            self, "기억 전체 삭제",
+            "단기 대화 + 장기기억(이전 대화 압축본)을 모두 삭제합니다.\n계속하시겠습니까?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if r != QMessageBox.Yes:
+            return
+        self._ctrl.clear_all_memory()
+        self._log.clear()
+        self._append("🧹 AI 기억이 완전히 초기화됐습니다.", "#f87")
 
     def _open_output_folder(self):
         """최근 저장된 영상/이미지 폴더를 탐색기로 열기."""
@@ -10180,6 +11238,8 @@ class KernelEngine:
         Parameters
         ----------
         channel : "bplus" | "tg_bplus" | "acc" | "ign"
+                  "plbm_real" (PLBM 실물 릴레이, D12)
+                  "plbm_sim"  (PLBM 모사 릴레이, D13 — 상호 배타)
         Returns
         -------
         True : 전송 성공
@@ -10194,6 +11254,7 @@ class KernelEngine:
         Parameters
         ----------
         channel : "bplus" | "tg_bplus" | "acc" | "ign"
+                  "plbm_real" | "plbm_sim"
         """
         if self.power is None:
             self._log("[Power] ❌ PowerController 미초기화"); return False
@@ -12242,212 +13303,352 @@ if __name__ == "__main__":
 # =============================================================================
 class PowerController:
     """
-    Arduino 시리얼 전원 제어기.
+    Arduino 시리얼 전원 제어기 v3 (핀맵 B v4.0 대응).
     KernelEngine과 PowerControlPanel이 같은 인스턴스를 공유한다.
 
-    채널 명령 표:
-      채널          ON    OFF
-      B+ (Battery)  "1"   "Q"
-      TG B+         "2"   "W"
-      ACC           "3"   "E"
-      IGN           "4"   "R"
-      ALL OFF             "0"
+    채널 명령 표 (v4.0):
+      채널             ON      OFF    설명
+      B+ (Battery)     "1"     "Q"
+      TG B+            "2"     "W"
+      ACC              "3"     "E"
+      IGN              "4"     "R"
+      PLBM 실물        "5"     "T"    D5 스위치 / D12 릴레이 (상호 배타)
+      PLBM 모사        "6"     "Y"    D6 스위치 / D13 릴레이 (상호 배타)
+      ALL OFF          "0"            전체 OFF
+
+    ※ OHCL 시간제한 기능은 v4.0에서 삭제됨 (D13 → PLBM 모사 릴레이로 변경)
+
+    Arduino → PC 프로토콜:
+      "S<HEX2>\\n"  상태 비트맵
+        bit7:B+  bit6:TG  bit5:ACC  bit4:IGN
+        bit3:PLBM_REAL  bit2:PLBM_SIM  bit1:LED_ON  bit0:rsvd
+      "L1\\n" / "L0\\n"  LED PWM 상태
+      "SW<ch>\\n"  택트스위치 이벤트 (ch=1~6) — Python에서 Z 쿼리로 상태 확인
     """
 
-    # 채널 이름 → (ON 명령, OFF 명령)
     CHANNELS: dict = {
-        "bplus":    ("1", "Q"),
-        "tg_bplus": ("2", "W"),
-        "acc":      ("3", "E"),
-        "ign":      ("4", "R"),
+        "bplus":      ("1", "Q"),
+        "tg_bplus":   ("2", "W"),
+        "acc":        ("3", "E"),
+        "ign":        ("4", "R"),
+        # [수정3] PLBM 실물(D5/D12) / PLBM 모사(D6/D13) 분리
+        # 두 채널은 상호 배타: 한쪽 ON → 반대쪽 자동 OFF
+        "plbm_real":  ("5", "T"),   # D5 스위치/D12 릴레이 — PLBM 실물
+        "plbm_sim":   ("6", "Y"),   # D6 스위치/D13 릴레이 — PLBM 모사
     }
+    # PLBM 상호 배타 쌍
+    _PLBM_MUTEX: dict = {"plbm_real": "plbm_sim", "plbm_sim": "plbm_real"}
     ALL_OFF_CMD = "0"
 
     def __init__(self):
-        self._ser     = None          # serial.Serial 인스턴스
+        self._ser     = None
         self._port    = ""
         self._lock    = threading.Lock()
-        self._log_cb  = None          # 로그 콜백 (str → None)
+        self._log_cb  = None
+        self._ch_state: dict = {
+            k: False for k in list(self.CHANNELS) + ["ohcl", "led", "plbm_real", "plbm_sim"]}
+        self._state_change_cbs: list = []
+        self._rx_thread  = None
+        self._rx_running = False
+        # [문제1/4 수정] TX 큐 — _rx_loop에서 send()를 직접 호출하지 않고 여기에 쌓음
+        # deque는 스레드 간 popleft/append가 GIL로 원자적 보장됨
+        self._tx_queue: "deque" = deque(maxlen=32)
 
-    # ── 공개 API ──────────────────────────────────────────────────────────────
+    def register_state_callback(self, cb):
+        if cb not in self._state_change_cbs:
+            self._state_change_cbs.append(cb)
+
+    def _fire_state_change(self, ch: str, is_on: bool):
+        for cb in self._state_change_cbs:
+            try: cb(ch, is_on)
+            except Exception: pass
+
     def connect(self, port: str, baudrate: int = 9600) -> bool:
-        """
-        시리얼 포트 연결.
-        Parameters
-        ----------
-        port     : 포트 이름 (예: "COM3", "/dev/ttyUSB0")
-        baudrate : 보드레이트 (기본 9600)
-        Returns
-        -------
-        True : 연결 성공, False : 실패
-        """
         try:
             import serial as _serial
         except ImportError:
-            self._log("❌ pyserial 미설치 — pip install pyserial")
-            return False
+            self._log("❌ pyserial 미설치"); return False
         with self._lock:
             if self._ser and self._ser.is_open:
                 self._ser.close()
             try:
-                self._ser = _serial.Serial(port, baudrate, timeout=1)
+                self._ser          = _serial.Serial()
+                self._ser.port     = port
+                self._ser.baudrate = baudrate
+                self._ser.timeout  = 0.1
+                self._ser.dtr      = False
+                self._ser.rts      = False
+                self._ser.open()
                 self._port = port
                 self._log(f"[Power] 연결: {port} @ {baudrate}bps")
-                return True
             except Exception as ex:
-                self._log(f"[Power] 연결 실패: {ex}")
-                return False
+                self._log(f"[Power] 연결 실패: {ex}"); return False
+        self._rx_running = True
+        self._rx_thread  = threading.Thread(
+            target=self._rx_loop, daemon=True, name="PowerRX")
+        self._rx_thread.start()
+        import time as _t; _t.sleep(0.1)
+        self.send("Z")
+        return True
 
     def disconnect(self):
-        """시리얼 포트 연결 해제."""
+        self._rx_running = False
         with self._lock:
             if self._ser and self._ser.is_open:
                 self._ser.close()
-            self._ser  = None
-            self._port = ""
+            self._ser = None; self._port = ""
         self._log("[Power] 연결 해제")
 
     @property
     def is_connected(self) -> bool:
-        """현재 시리얼 연결 상태."""
         return bool(self._ser and self._ser.is_open)
 
     @property
     def port(self) -> str:
-        """현재 연결된 포트 이름."""
         return self._port
 
+    def _rx_loop(self):
+        """Arduino → PC 상태 보고 수신 스레드.
+
+        [문제1 수정] blocking read(1) 제거 → in_waiting==0이면 sleep 후 continue.
+          기존 코드는 in_waiting==0일 때 blocking read(1, timeout=0.1s)를 호출해
+          타임아웃마다 시리얼 버스에 wake를 줘서 Arduino RX LED를 불필요하게 점등시킴.
+
+        [문제4 수정] SW 수신 후 send("Z")를 _tx_queue를 통해 비동기 전송.
+          _rx_loop 내에서 send()를 직접 호출하면 self._lock 경합 가능성 있음.
+          _tx_queue(deque)에 넣어 두면, 루프 상단에서 lock 없이 꺼내 안전하게 전송.
+
+        수신 패킷 형식:
+          "S<HEX2>\\n"  — 릴레이 상태 비트맵 (항상 처리)
+          "L1\\n"/"L0\\n" — LED PWM ON/OFF
+          "SW<ch>\\n"   — 택트스위치 이벤트 (ch='1'~'8')
+          "M\\n"/"N\\n"  — OHCL 단타/장누름 트리거
+        """
+        import time as _t
+        buf = ""
+        while self._rx_running:
+            try:
+                # ── TX 큐 처리 (send("Z") 등 비동기 전송) ────────────────
+                while self._tx_queue:
+                    cmd = self._tx_queue.popleft()
+                    self.send(cmd)
+
+                # ── 시리얼 포트 참조 획득 (짧은 락) ─────────────────────
+                with self._lock:
+                    ser = self._ser
+                if not (ser and ser.is_open):
+                    _t.sleep(0.05); continue
+
+                # ── [문제1 수정] in_waiting==0이면 skip → blocking read 없음 ──
+                waiting = ser.in_waiting
+                if not waiting:
+                    _t.sleep(0.02)   # 20ms 슬립 — CPU 절약, LED 불자극
+                    continue
+
+                raw = ser.read(waiting)
+                if not raw:
+                    continue
+                buf += raw.decode(errors="replace")
+
+                while "\n" in buf:
+                    line, buf = buf.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    # ── SW<ch> : 택트스위치 이벤트 (반드시 S<HEX> 보다 먼저!) ──
+                    if line.startswith("SW") and len(line) == 3:
+                        ch_idx = line[2]  # '1'~'8'
+                        self._log(f"[Power←SW] 스위치 이벤트 ch={ch_idx}")
+                        # [문제4 수정] Z 쿼리를 _tx_queue로 비동기 예약 (락 경합 방지)
+                        self._tx_queue.append("Z")
+
+                    # ── M/N : OHCL 단타/장누름 트리거 ───────────────────────
+                    elif line == "M" or line == "N":
+                        self._log(f"[Power←OHCL] 트리거={line!r} "
+                                  f"({'수동녹화' if line=='M' else '타임랩스'})")
+                        self._fire_state_change(
+                            "ohcl_manual" if line == "M" else "ohcl_timelapse", True)
+
+                    # ── S<HEX2> : 릴레이 상태 비트맵 ────────────────────────
+                    # ※ SW 체크 이후에 위치해야 "SW1" 등을 S-packet으로 오파싱 안 함
+                    elif line.startswith("S") and len(line) == 3:
+                        try:
+                            self._parse_state_byte(int(line[1:], 16))
+                        except ValueError:
+                            pass
+
+                    # ── L1/L0 : LED PWM 상태 ─────────────────────────────────
+                    elif line.startswith("L") and len(line) == 2:
+                        led_on = (line[1] == "1")
+                        if self._ch_state.get("led") != led_on:
+                            self._ch_state["led"] = led_on
+                            self._fire_state_change("led", led_on)
+                            self._log(f"[Power] LED {'ON' if led_on else 'OFF'}")
+
+            except Exception:
+                _t.sleep(0.05)
+
+    def _parse_state_byte(self, val: int):
+        """Arduino 상태 바이트를 _ch_state에 반영.
+
+        Arduino g_state 비트맵 (v4.0 핀맵 B):
+          bit7:B+  bit6:TG  bit5:ACC  bit4:IGN
+          bit3:PLBM_REAL(D12)  bit2:PLBM_SIM(D13)  bit1:LED  bit0:rsvd
+        """
+        mapping = [
+            ("bplus",     7), ("tg_bplus", 6), ("acc",      5), ("ign",  4),
+            ("plbm_real", 3), ("plbm_sim", 2),  ("led",      1),
+        ]
+        for ch, bit in mapping:
+            new_st = bool(val & (1 << bit))
+            if new_st != self._ch_state.get(ch, False):
+                self._ch_state[ch] = new_st
+                self._fire_state_change(ch, new_st)
+                self._log(
+                    f"[Power←Arduino] {ch.upper()} {'ON' if new_st else 'OFF'}")
+
     def send(self, cmd: str) -> bool:
-        """
-        임의 명령 문자열 전송.
-        Parameters
-        ----------
-        cmd : 전송할 ASCII 명령 (예: "1", "Q", "0")
-        Returns
-        -------
-        True : 전송 성공, False : 연결 없음 / 실패
-        """
         with self._lock:
             if not (self._ser and self._ser.is_open):
-                self._log("[Power] ❌ 미연결 — send 실패")
-                return False
+                self._log("[Power] ❌ 미연결"); return False
             try:
                 self._ser.write(cmd.encode())
-                self._log(f"[Power TX] {cmd!r}")
-                return True
+                self._log(f"[Power TX] {cmd!r}"); return True
             except Exception as ex:
-                self._log(f"[Power TX ERR] {ex}")
-                return False
+                self._log(f"[Power TX ERR] {ex}"); return False
 
     def channel_on(self, channel: str) -> bool:
-        """
-        지정 채널 ON.
-        Parameters
-        ----------
-        channel : "bplus" | "tg_bplus" | "acc" | "ign"
-        """
         ch = channel.lower().strip()
-        if ch not in self.CHANNELS:
-            self._log(f"[Power] ❌ 알 수 없는 채널: {channel!r}  (가능: {list(self.CHANNELS)})")
+        if ch == "ohcl":
+            self._log("[Power] ⚠ OHCL은 v4.0에서 지원 중단. plbm_sim 채널을 사용하세요.")
             return False
-        return self.send(self.CHANNELS[ch][0])
+        if ch not in self.CHANNELS:
+            self._log(f"[Power] ❌ 알 수 없는 채널: {channel!r}"); return False
+        # [수정3] PLBM 상호 배타: 반대편 채널 먼저 OFF
+        mutex_ch = self._PLBM_MUTEX.get(ch)
+        if mutex_ch and self._ch_state.get(mutex_ch, False):
+            off_cmd = self.CHANNELS.get(mutex_ch, (None, None))[1]
+            if off_cmd:
+                self.send(off_cmd)
+                self._ch_state[mutex_ch] = False
+                self._fire_state_change(mutex_ch, False)
+                self._log(f"[Power] PLBM 배타: {mutex_ch.upper()} 자동 OFF")
+                import time as _t; _t.sleep(0.05)
+        result = self.send(self.CHANNELS[ch][0])
+        if result:
+            self._ch_state[ch] = True
+            self._fire_state_change(ch, True)
+        return result
 
     def channel_off(self, channel: str) -> bool:
-        """
-        지정 채널 OFF.
-        Parameters
-        ----------
-        channel : "bplus" | "tg_bplus" | "acc" | "ign"
-        """
         ch = channel.lower().strip()
-        if ch not in self.CHANNELS:
-            self._log(f"[Power] ❌ 알 수 없는 채널: {channel!r}  (가능: {list(self.CHANNELS)})")
+        if ch == "ohcl":
+            self._log("[Power] ⚠ OHCL은 v4.0에서 지원 중단. plbm_sim 채널을 사용하세요.")
             return False
-        return self.send(self.CHANNELS[ch][1])
+        if ch not in self.CHANNELS:
+            self._log(f"[Power] ❌ 알 수 없는 채널: {channel!r}"); return False
+        result = self.send(self.CHANNELS[ch][1])
+        if result:
+            self._ch_state[ch] = False
+            self._fire_state_change(ch, False)
+        return result
+
+    def ohcl_on(self, duration: int = 0) -> bool:
+        """
+        BLTN OHCL 릴레이 ON — v4.0 아두이노에서 지원 중단.
+        v4.0에서 D13이 PLBM 모사 릴레이로 변경되어 OHCL 시간제한 기능은 삭제됨.
+        plbm_sim 채널(channel_on('plbm_sim'))을 사용하세요.
+        """
+        self._log("[Power] ⚠ OHCL은 v4.0에서 지원 중단. plbm_sim 채널을 사용하세요.")
+        return False
+
+    def is_on(self, channel: str) -> bool:
+        return self._ch_state.get(channel.lower().strip(), False)
 
     def all_off(self) -> bool:
-        """전체 전원 OFF (비상 정지)."""
         self._log("[Power] ⚠ ALL OFF")
-        return self.send(self.ALL_OFF_CMD)
+        result = self.send(self.ALL_OFF_CMD)
+        if result:
+            for ch in ["bplus", "tg_bplus", "acc", "ign", "plbm_real", "plbm_sim"]:
+                if self._ch_state.get(ch):
+                    self._ch_state[ch] = False
+                    self._fire_state_change(ch, False)
+        return result
+
+    def query_state(self) -> bool:
+        """Arduino에 상태 쿼리."""
+        return self.send("Z")
 
     def list_ports(self) -> list:
-        """
-        사용 가능한 시리얼 포트 목록 반환.
-        Returns
-        -------
-        list[str] : 포트 이름 목록 (예: ["COM3", "COM5"])
-        """
         try:
             import serial.tools.list_ports as _lp
-            ports = [p.device for p in _lp.comports()]
-            self._log(f"[Power] 포트 목록: {ports}")
-            return ports
+            return [p.device for p in _lp.comports()]
         except ImportError:
-            self._log("[Power] ❌ pyserial 미설치")
-            return []
+            self._log("[Power] ❌ pyserial 미설치"); return []
 
-    def read(self, timeout: float = 0.2) -> str:
-        """
-        수신 버퍼에서 데이터 읽기.
-        Parameters
-        ----------
-        timeout : 최대 대기 시간(초)
-        Returns
-        -------
-        str : 수신 데이터 (없으면 빈 문자열)
-        """
-        import time as _time
-        deadline = _time.time() + timeout
-        buf = ""
-        with self._lock:
-            if not (self._ser and self._ser.is_open):
-                return ""
-            while _time.time() < deadline:
-                if self._ser.in_waiting:
-                    buf += self._ser.read(self._ser.in_waiting).decode(errors='replace')
-                else:
-                    _time.sleep(0.02)
-        return buf.strip()
+    def read(self, timeout: float = 0.0) -> str:
+        """하위 호환용 — 수신은 _rx_loop에서 처리."""
+        return ""
 
-    # ── 내부 ─────────────────────────────────────────────────────────────────
     def _log(self, msg: str):
         if self._log_cb:
             try: self._log_cb(msg)
             except: pass
 
     def set_log_callback(self, cb):
-        """로그 콜백 설정 (str → None)."""
         self._log_cb = cb
 
-# ═══ v2.9 추가 모듈 끝 ═══════════════════════════════════════════════
+
 class PowerControlPanel(QWidget):
     _CONTROLS = [
         ("B+ (Battery)",    "bplus"),
         ("TG B+ (Target)",  "tg_bplus"),
         ("ACC (Accessory)", "acc"),
         ("IGN (Ignition)",  "ign"),
+        # [수정3] PLBM 실물/모사 분리 — 상호 배타 (동시 ON 불가)
+        ("PLBM 실물 릴레이", "plbm_real"),  # D5/D12
+        ("PLBM 모사 릴레이", "plbm_sim"),   # D6/D13
     ]
+    # 채널별 기본 아두이노 핀 번호
+    _DEFAULT_PINS = {
+        "bplus":     "4",   # D4
+        "tg_bplus":  "5",   # D5
+        "acc":       "6",   # D6
+        "ign":       "7",   # D7
+        "plbm_real": "3",   # D12 (릴레이)
+        "plbm_sim":  "3",   # D13 (릴레이)
+    }
+    _PIN_OPTIONS = [str(i) for i in range(1, 13)]
+    # PLBM 상호 배타 쌍 (UI 레벨 참조용)
+    _PLBM_MUTEX = {"plbm_real": "plbm_sim", "plbm_sim": "plbm_real"}
 
-    def __init__(self, power_ctrl: 'PowerController', parent=None):
+    def __init__(self, power_ctrl: 'PowerController', db=None, parent=None):
         super().__init__(parent)
-        # ★ 수정: 공유 PowerController 인스턴스 사용
         self._ctrl = power_ctrl
+        self._db   = db
         self._ctrl.set_log_callback(self._append_log)
+        # ON/OFF 버튼 참조 보관 (상태 강조용)
+        self._btn_on:  dict = {}  # ch → QPushButton
+        self._btn_off: dict = {}  # ch → QPushButton
+        # 아두이노 핀 셀렉트박스 참조
+        self._pin_cb:  dict = {}  # ch → QComboBox
         self._build()
+        # 시작 시 포트 자동 탐색
+        QTimer.singleShot(500, self._auto_scan_port)
 
     def _build(self):
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(8)
 
-        # ── 포트 선택 ──
-        pg = QGroupBox("🔌 시리얼 포트")
+        # ── 포트 선택 + 자동 탐색 ─────────────────────────────────────────
+        pg = QGroupBox("🔌 시리얼 포트 (자동 탐색)")
         pl = QHBoxLayout(pg); pl.setSpacing(6)
         self._port_cb = QComboBox()
         self._port_cb.setStyleSheet(
             "QComboBox{background:#1a1a3a;color:#ddd;"
             "border:1px solid #3a4a6a;border-radius:3px;padding:2px 6px;}")
-        self._refresh_ports()
 
         ref_btn = QPushButton("🔄")
         ref_btn.setFixedSize(28, 28)
@@ -12456,6 +13657,14 @@ class PowerControlPanel(QWidget):
             "QPushButton{background:#1a2a3a;color:#9ab;"
             "border:1px solid #2a3a5a;border-radius:3px;}")
         ref_btn.clicked.connect(self._refresh_ports)
+
+        auto_btn = QPushButton("🔍 자동탐색")
+        auto_btn.setFixedHeight(28)
+        auto_btn.setToolTip("아두이노 포트 자동 탐색 후 연결")
+        auto_btn.setStyleSheet(
+            "QPushButton{background:#1a3a2a;color:#7fdb9e;"
+            "border:1px solid #2a5a3a;border-radius:4px;font-size:10px;}")
+        auto_btn.clicked.connect(self._auto_scan_port)
 
         self._conn_btn = QPushButton("연결")
         self._conn_btn.setFixedHeight(28)
@@ -12470,72 +13679,150 @@ class PowerControlPanel(QWidget):
 
         pl.addWidget(self._port_cb, 1)
         pl.addWidget(ref_btn)
+        pl.addWidget(auto_btn)
         pl.addWidget(self._conn_btn)
         pl.addWidget(self._conn_status)
         v.addWidget(pg)
+        self._refresh_ports()
 
-        # ── 채널별 ON/OFF ──
+        # ── 채널별 ON/OFF + 핀 선택 ─────────────────────────────────────────
         cg = QGroupBox("🔋 전원 채널 제어")
         cl = QVBoxLayout(cg); cl.setSpacing(6)
 
-        _COLORS = ["#2ecc71", "#3498db", "#f0c040", "#e67e22"]
+        _COLORS = {
+            "bplus":     "#2ecc71",
+            "tg_bplus":  "#3498db",
+            "acc":       "#f0c040",
+            "ign":       "#e67e22",
+            "plbm_real": "#1abc9c",  # 청록 — 실물
+            "plbm_sim":  "#9b59b6",  # 보라 — 모사
+        }
         for i, (name, ch_key) in enumerate(self._CONTROLS):
             row = QHBoxLayout(); row.setSpacing(6)
+
             lbl = QLabel(name)
-            lbl.setFixedWidth(130)
+            lbl.setFixedWidth(120)
             lbl.setStyleSheet(
-                f"color:{_COLORS[i % len(_COLORS)]};font-size:11px;font-weight:bold;")
+                f"color:{_COLORS.get(ch_key, '#aaa')};"
+                "font-size:11px;font-weight:bold;")
 
-            btn_on = QPushButton("▶ ON")
+            # 아두이노 핀 셀렉트박스
+            pin_cb = QComboBox()
+            pin_cb.addItems(self._PIN_OPTIONS)
+            # [문제3 수정] blockSignals로 보호 후 setCurrentText 호출
+            # blockSignals 없이 setCurrentText()를 쓰면 currentTextChanged가 즉시 발화해
+            # _on_pin_changed() → CHANNELS 오염으로 이어지는 버그가 있었음.
+            pin_cb.blockSignals(True)
+            pin_cb.setCurrentText(self._DEFAULT_PINS.get(ch_key, "1"))
+            pin_cb.blockSignals(False)
+            pin_cb.setFixedWidth(52)
+            pin_cb.setFixedHeight(28)
+            pin_cb.setToolTip(f"{name} 에 매핑된 아두이노 핀 번호")
+            pin_cb.setStyleSheet(
+                "QComboBox{background:#0a1a2a;color:#7bc8e0;"
+                "border:1px solid #2a3a5a;border-radius:3px;"
+                "font-size:10px;padding:1px 4px;}")
+            pin_cb.currentTextChanged.connect(
+                lambda txt, ch=ch_key: self._on_pin_changed(ch, txt))
+            self._pin_cb[ch_key] = pin_cb
+
+            # [추가3] ON/OFF 버튼 — 상태에 따라 밝기 강조
+            btn_on = ClickLabel("▶ ON")
             btn_on.setMinimumHeight(32)
-            btn_on.setStyleSheet(
-                "QPushButton{background:#1a4a2a;color:#afffcf;"
-                "border:1px solid #2a8a5a;border-radius:4px;font-weight:bold;}"
-                "QPushButton:hover{background:#225a3a;}"
-                "QPushButton:disabled{background:#0a1a0a;color:#3a5a3a;}")
-            btn_on.clicked.connect(
-                lambda _=False, ch=ch_key: self._ctrl.channel_on(ch))
+            btn_on.setStyleSheet(self._btn_on_ss(False))
+            btn_on.clicked.connect(lambda ch=ch_key: self._do_channel_on(ch))
+            self._btn_on[ch_key] = btn_on
 
-            btn_off = QPushButton("■ OFF")
+            btn_off = ClickLabel("■ OFF")
             btn_off.setMinimumHeight(32)
-            btn_off.setStyleSheet(
-                "QPushButton{background:#3a1a1a;color:#ffaaaa;"
-                "border:1px solid #6a2a2a;border-radius:4px;font-weight:bold;}"
-                "QPushButton:hover{background:#5a1a1a;}"
-                "QPushButton:disabled{background:#1a0a0a;color:#5a3a3a;}")
-            btn_off.clicked.connect(
-                lambda _=False, ch=ch_key: self._ctrl.channel_off(ch))
+            btn_off.setStyleSheet(self._btn_off_ss(True))
+            btn_off.clicked.connect(lambda ch=ch_key: self._do_channel_off(ch))
+            self._btn_off[ch_key] = btn_off
 
             row.addWidget(lbl)
+            row.addWidget(QLabel("핀:"))
+            row.addWidget(pin_cb)
             row.addWidget(btn_on, 1)
             row.addWidget(btn_off, 1)
             cl.addLayout(row)
 
         v.addWidget(cg)
 
-        # ── 전체 OFF ──
+        # ── [수정3] PLBM 상호 배타 상태 표시 레이블 ─────────────────────────
+        self._plbm_mutex_lbl = QLabel("● PLBM 전체 OFF")
+        self._plbm_mutex_lbl.setAlignment(Qt.AlignCenter)
+        self._plbm_mutex_lbl.setStyleSheet(
+            "color:#556;font-size:10px;"
+            "background:#0a0a1a;border:1px solid #1a1a3a;"
+            "border-radius:3px;padding:2px 6px;")
+        v.addWidget(self._plbm_mutex_lbl)
+
+        # ── BLTN OHCL 릴레이 — v4.0 지원 중단 안내 ────────────────────────
+        # v4.0에서 D13이 PLBM 모사 릴레이로 변경됨 → OHCL 기능 폐기
+        # PLBM 모사 릴레이는 위 채널 제어 패널의 "PLBM 모사 릴레이" 버튼을 사용하세요.
+        ohcl_grp = QGroupBox("⚡ BLTN OHCL (v4.0 지원 중단)")
+        ohcl_grp.setStyleSheet(
+            "QGroupBox{color:#556;border:1px solid #2a2a2a;"
+            "border-radius:4px;margin-top:8px;padding:6px;}"
+            "QGroupBox::title{color:#556;}")
+        ol = QHBoxLayout(ohcl_grp); ol.setSpacing(8)
+
+        ohcl_note = QLabel(
+            "⚠ v4.0에서 D13이 PLBM 모사 릴레이로 변경됨.\n"
+            "PLBM 모사 릴레이(위 채널 제어 패널)를 사용하세요.")
+        ohcl_note.setStyleSheet("color:#556;font-size:9px;")
+        ohcl_note.setWordWrap(True)
+        ol.addWidget(ohcl_note, 1)
+
+        # 하위 호환 stub (_sync_btn_styles에서 참조하므로 유지)
+        self._ohcl_state_lbl = QLabel("● 미지원")
+        self._ohcl_state_lbl.setStyleSheet("color:#333;font-size:10px;")
+        ol.addWidget(self._ohcl_state_lbl)
+        v.addWidget(ohcl_grp)
+
+        # ── LED PWM 상태 표시 (D12 수신 → LED UI) ───────────────────────────
+        led_grp = QGroupBox("💡 BLTN LED 상태 (D12 PWM 수신)")
+        led_grp.setStyleSheet(
+            "QGroupBox{color:#7bc8e0;border:1px solid #0a3a5a;"
+            "border-radius:4px;margin-top:4px;padding:6px;}"
+            "QGroupBox::title{color:#7bc8e0;}")
+        ll2 = QHBoxLayout(led_grp); ll2.setSpacing(10)
+
+        self._led_indicator = QLabel("●")
+        self._led_indicator.setFixedWidth(20)
+        self._led_indicator.setAlignment(Qt.AlignCenter)
+        self._led_indicator.setStyleSheet(
+            "color:#222;font-size:22px;")  # 초기: 꺼짐
+        ll2.addWidget(self._led_indicator)
+
+        self._led_state_lbl = QLabel("LED OFF")
+        self._led_state_lbl.setStyleSheet("color:#556;font-size:11px;font-weight:bold;")
+        ll2.addWidget(self._led_state_lbl)
+        ll2.addStretch()
+        v.addWidget(led_grp)
+
+        # ── 전체 OFF ─────────────────────────────────────────────────────────
         all_off = QPushButton("⚠  ALL POWER OFF  (비상)")
         all_off.setMinimumHeight(44)
         all_off.setStyleSheet(
             "QPushButton{background:#7f0000;color:white;"
             "font-size:13px;font-weight:bold;"
             "border:2px solid #e74c3c;border-radius:6px;}"
-            "QPushButton:hover{background:#a00000;}"
-            "QPushButton:disabled{background:#2a0a0a;color:#5a3a3a;}")
-        all_off.clicked.connect(lambda: self._ctrl.all_off())
+            "QPushButton:hover{background:#a00000;}")
+        all_off.clicked.connect(self._do_all_off)
         v.addWidget(all_off)
 
-        # ── 수신 로그 ──
+        # ── 수신 로그 ─────────────────────────────────────────────────────────
         lg = QGroupBox("📟 수신 로그")
         ll = QVBoxLayout(lg)
-        self._log = QPlainTextEdit()
-        self._log.setReadOnly(True)
-        self._log.setFixedHeight(70)
-        self._log.setStyleSheet(
+        self._log_w = QPlainTextEdit()
+        self._log_w.setReadOnly(True)
+        self._log_w.setFixedHeight(70)
+        self._log_w.setStyleSheet(
             "QPlainTextEdit{background:#030308;color:#7bc8e0;"
             "font-family:Consolas,monospace;font-size:10px;"
             "border:1px solid #0a1a2a;}")
-        ll.addWidget(self._log)
+        ll.addWidget(self._log_w)
         v.addWidget(lg)
 
         # 수신 폴링 타이머
@@ -12543,6 +13830,128 @@ class PowerControlPanel(QWidget):
         self._rx_timer.timeout.connect(self._poll_rx)
         self._rx_timer.start(100)
 
+        # [문제1] 버튼 상태 동기화 타이머 (200ms)
+        # 외부 스위치/UART 수신으로 _ch_state가 바뀐 경우에도 버튼 강조 갱신
+        self._btn_sync_timer = QTimer(self)
+        self._btn_sync_timer.timeout.connect(self._sync_btn_styles)
+        self._btn_sync_timer.start(200)
+
+    # ── 스타일시트 헬퍼 ───────────────────────────────────────────────────────
+    @staticmethod
+    def _btn_on_ss(active: bool) -> str:
+        if active:
+            return ("QLabel{background:#00bb44;color:#ffffff;"
+                    "border:2px solid #00ff88;border-radius:4px;"
+                    "font-weight:bold;font-size:12px;padding:4px;}")
+        else:
+            return ("QLabel{background:#0d2a1a;color:#3a6a4a;"
+                    "border:1px solid #1a4a2a;border-radius:4px;"
+                    "font-weight:bold;font-size:12px;padding:4px;}")
+
+    @staticmethod
+    def _btn_off_ss(active: bool) -> str:
+        if active:
+            return ("QLabel{background:#bb2200;color:#ffffff;"
+                    "border:2px solid #ff4400;border-radius:4px;"
+                    "font-weight:bold;font-size:12px;padding:4px;}")
+        else:
+            return ("QLabel{background:#2a0d0d;color:#6a3a3a;"
+                    "border:1px solid #4a1a1a;border-radius:4px;"
+                    "font-weight:bold;font-size:12px;padding:4px;}")
+
+    def _do_ohcl_on(self):
+        """OHCL ON — v4.0에서 미지원 (PLBM 모사 릴레이로 대체됨)."""
+        self._append_log("[Power] ⚠ OHCL은 v4.0에서 지원 중단. PLBM 모사 릴레이를 사용하세요.")
+
+    def _sync_btn_styles(self):
+        """200ms마다 _ch_state와 버튼 강조 동기화.
+        [수정2] ON/OFF 상태를 명확하게 색상으로 표시.
+        [수정3] PLBM 상호 배타 상태도 동기화.
+        """
+        for _, ch in self._CONTROLS:
+            self._update_btn_style(ch, self._ctrl.is_on(ch))
+        # OHCL 상태 레이블 — v4.0에서 미지원 (고정 표시)
+        self._ohcl_state_lbl.setText("● 미지원(v4.0)")
+        self._ohcl_state_lbl.setStyleSheet("color:#333;font-size:10px;")
+        # LED 상태 표시
+        led_on = self._ctrl.is_on("led")
+        if led_on:
+            self._led_indicator.setStyleSheet("color:#ffff44;font-size:22px;")
+            self._led_state_lbl.setText("LED ON ✅")
+            self._led_state_lbl.setStyleSheet("color:#ffff44;font-size:11px;font-weight:bold;")
+        else:
+            self._led_indicator.setStyleSheet("color:#333;font-size:22px;")
+            self._led_state_lbl.setText("LED OFF")
+            self._led_state_lbl.setStyleSheet("color:#556;font-size:11px;font-weight:bold;")
+        # [수정3] PLBM 상호 배타 경고 레이블 갱신
+        if hasattr(self, '_plbm_mutex_lbl'):
+            r_on = self._ctrl.is_on("plbm_real")
+            s_on = self._ctrl.is_on("plbm_sim")
+            if r_on and s_on:
+                # 동시 ON은 발생하면 안 되지만 방어적으로 표시
+                self._plbm_mutex_lbl.setText("⚠ PLBM 동시 ON — 오류!")
+                self._plbm_mutex_lbl.setStyleSheet("color:#e74c3c;font-size:10px;font-weight:bold;")
+            elif r_on:
+                self._plbm_mutex_lbl.setText("▶ 실물 릴레이 ON")
+                self._plbm_mutex_lbl.setStyleSheet("color:#2ecc71;font-size:10px;")
+            elif s_on:
+                self._plbm_mutex_lbl.setText("▶ 모사 릴레이 ON")
+                self._plbm_mutex_lbl.setStyleSheet("color:#3498db;font-size:10px;")
+            else:
+                self._plbm_mutex_lbl.setText("● PLBM 전체 OFF")
+                self._plbm_mutex_lbl.setStyleSheet("color:#556;font-size:10px;")
+
+    def _update_btn_style(self, ch: str, is_on: bool):
+        """채널 상태에 따라 ON/OFF 버튼 강조 업데이트."""
+        if ch in self._btn_on:
+            self._btn_on[ch].setStyleSheet(self._btn_on_ss(is_on))
+        if ch in self._btn_off:
+            self._btn_off[ch].setStyleSheet(self._btn_off_ss(not is_on))
+
+    # ── 채널 제어 (DB 즉시 저장) ─────────────────────────────────────────────
+    def _do_channel_on(self, ch: str):
+        ok = self._ctrl.channel_on(ch)
+        if ok:
+            self._update_btn_style(ch, True)
+            # [수정3] PLBM 상호 배타 — 반대편 OFF UI 갱신
+            mutex_ch = self._PLBM_MUTEX.get(ch)
+            if mutex_ch:
+                self._update_btn_style(mutex_ch, False)
+            self._sync_db()
+
+    def _do_channel_off(self, ch: str):
+        ok = self._ctrl.channel_off(ch)
+        if ok:
+            self._update_btn_style(ch, False)
+            self._sync_db()
+
+    def _do_all_off(self):
+        self._ctrl.all_off()
+        for _, ch in self._CONTROLS:
+            self._update_btn_style(ch, False)
+        self._sync_db()
+
+    def _sync_db(self):
+        """전원 상태 변경 시 DB에 즉시 저장."""
+        if self._db is None:
+            return
+        try:
+            state = {ch: self._ctrl.is_on(ch) for _, ch in self._CONTROLS}
+            self._db.save_kv("power_ch_state", state)
+        except Exception:
+            pass
+
+    def _on_pin_changed(self, ch: str, pin: str):
+        """핀 셀렉트박스 변경 시 로그만 기록.
+        [문제3 근본 수정] 기존 구현은 QComboBox.setCurrentText()가 초기화 시 즉시
+        currentTextChanged를 발화시켜 PowerController.CHANNELS를 오염시켰음.
+        예) tg_bplus 기본핀 "5" → CHANNELS["tg_bplus"] = ("5","T")
+           → PLBM_REAL ON 명령 "5"와 동일해져 충돌 발생.
+        핀 셀렉트박스는 UI 표시 전용. CHANNELS는 클래스 상수 그대로 사용.
+        """
+        self._append_log(f"[Power] ℹ {ch} 핀 표시: {pin} (UART 명령은 프로토콜 고정)")
+
+    # ── 포트 탐색 ─────────────────────────────────────────────────────────────
     def _refresh_ports(self):
         self._port_cb.clear()
         ports = self._ctrl.list_ports()
@@ -12551,6 +13960,70 @@ class PowerControlPanel(QWidget):
                 self._port_cb.addItem(p)
         else:
             self._port_cb.addItem("(포트 없음)")
+
+    def _auto_scan_port(self):
+        """
+        [추가1] 아두이노 포트 자동 탐색.
+        pyserial의 comports()에서 'Arduino' 또는 'CH340' 등의 키워드로 필터링.
+        찾으면 자동 연결 시도, 못 찾으면 소형 모달 경고.
+        """
+        try:
+            import serial.tools.list_ports as _lp
+            candidates = []
+            for p in _lp.comports():
+                desc = (p.description or "").lower()
+                mfr  = (getattr(p, 'manufacturer', '') or "").lower()
+                hwid = (getattr(p, 'hwid', '') or "").lower()
+                # Arduino / CH340 / CH341 / FTDI / CP210x 칩 키워드
+                if any(k in desc + mfr + hwid
+                       for k in ["arduino", "ch340", "ch341",
+                                  "ftdi", "cp210", "usb serial"]):
+                    candidates.append(p.device)
+            if candidates:
+                best = candidates[0]
+                # 포트 콤보박스 갱신
+                self._port_cb.clear()
+                for c in candidates:
+                    self._port_cb.addItem(c)
+                self._port_cb.setCurrentText(best)
+                # 자동 연결
+                if not self._ctrl.is_connected:
+                    ok = self._ctrl.connect(best, 9600)
+                    if ok:
+                        self._conn_btn.setText("연결 해제")
+                        self._conn_status.setText(f"● {best} (자동)")
+                        self._conn_status.setStyleSheet(
+                            "color:#2ecc71;font-size:10px;font-weight:bold;")
+                        self._append_log(f"[Power] 자동 탐색 연결: {best}")
+                    else:
+                        self._show_no_device_warning(best)
+            else:
+                # 포트 목록 갱신 후 경고
+                self._refresh_ports()
+                self._show_no_device_warning(None)
+        except ImportError:
+            self._refresh_ports()
+        except Exception as ex:
+            self._append_log(f"[Power] 자동 탐색 오류: {ex}")
+            self._refresh_ports()
+
+    def _show_no_device_warning(self, port):
+        """아두이노 미연결 시 소형 모달 경고."""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("전원 제어 모듈 미감지")
+        if port:
+            body = (f"포트 {port}에서 연결에 실패했습니다.\n"
+                    "USB 케이블 연결 및 드라이버를 확인하세요.")
+        else:
+            body = ("아두이노(전원 제어 모듈)가 감지되지 않았습니다.\n"
+                    "USB를 연결하거나 포트를 직접 선택 후 [연결]을 클릭하세요.")
+        msg.setText(body)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.setStyleSheet(
+            "QMessageBox{background:#1a0a0a;color:#ddd;}"
+            "QLabel{color:#f0c040;font-size:11px;}")
+        msg.exec_()
 
     def _toggle_connection(self):
         if self._ctrl.is_connected:
@@ -12581,24 +14054,403 @@ class PowerControlPanel(QWidget):
                     f"{port} 연결에 실패했습니다.\npyserial 설치 여부를 확인하세요.")
 
     def _append_log(self, msg: str):
-        """PowerController 로그 콜백 → 수신 로그 패널."""
-        self._log.appendPlainText(msg)
-        self._log.verticalScrollBar().setValue(
-            self._log.verticalScrollBar().maximum())
+        self._log_w.appendPlainText(msg)
+        self._log_w.verticalScrollBar().setValue(
+            self._log_w.verticalScrollBar().maximum())
 
     def _poll_rx(self):
-        """수신 폴링 — PowerController를 통해 읽기."""
-        if not self._ctrl.is_connected:
-            return
-        data = self._ctrl.read(timeout=0.0)
-        if data:
-            self._log.appendPlainText(f"[RX] {data}")
-            self._log.verticalScrollBar().setValue(
-                self._log.verticalScrollBar().maximum())
+        """수신 로그 박스 갱신 전용 (실제 수신은 _rx_loop 스레드가 처리).
+        [문제1 수정] read() 호출 제거 — 불필요한 시리얼 접근이 RX LED를 자극했음.
+        """
+        # 로그는 _append_log 콜백으로 이미 수신 스레드에서 기록되므로 여기서 별도 처리 불필요.
+        pass
 
     def closeEvent(self, e):
-        # PowerController 연결은 MainWindow.closeEvent에서 일괄 해제
         super().closeEvent(e)
+
+# =============================================================================
+class TimerPanel(QWidget):
+    """
+    조건부 타이머 패널.
+
+    시작/종료 조건:
+      · B+(Battery) ON/OFF
+      · TG B+ ON/OFF
+      · ACC ON/OFF
+      · IGN ON/OFF
+      · 수동 버튼
+
+    조건 결합: AND (전부 충족) / OR (하나 이상 충족)
+    타이머는 여러 개 동시 실행 가능 (각각 독립 레코드).
+    """
+
+    _CHANNELS = [
+        ("bplus",     "B+ (Battery)"),
+        ("tg_bplus",  "TG B+"),
+        ("acc",       "ACC"),
+        ("ign",       "IGN"),
+        ("plbm_real", "PLBM 실물"),  # [수정3] v4.0 추가
+        ("plbm_sim",  "PLBM 모사"),  # [수정3] v4.0 추가
+    ]
+
+    def __init__(self, engine: "CoreEngine", signals: "Signals",
+                 power_ctrl=None, parent=None):
+        super().__init__(parent)
+        self._engine     = engine
+        self._signals    = signals
+        self._power_ctrl = power_ctrl
+
+        self._running    = False
+        self._start_ts   = 0.0
+        self._elapsed    = 0.0
+        self._laps       = []
+
+        # [수정1] 이벤트 기반: 폴링 대신 PowerController 콜백 등록
+        # → 전원 ON/OFF 발생 즉시 _on_power_state_change() 호출
+        self._cond_watch_enabled = False  # 조건 감시 ON/OFF 토글
+
+        self._build()
+
+        # 경과 시간 표시용 타이머만 유지 (100ms)
+        # 전원 상태 감시는 폴링이 아닌 콜백으로 처리
+        self._disp_timer = QTimer(self)
+        self._disp_timer.setInterval(100)
+        self._disp_timer.timeout.connect(self._update_display)
+        self._disp_timer.start()
+
+        # PowerController 등록
+        if power_ctrl is not None:
+            self._register_power_callback(power_ctrl)
+
+    def set_power(self, power_ctrl):
+        self._power_ctrl = power_ctrl
+        self._register_power_callback(power_ctrl)
+
+    def _register_power_callback(self, power_ctrl):
+        """[수정1] PowerController에 즉시 알림 콜백 등록."""
+        try:
+            power_ctrl.register_state_callback(self._on_power_state_change)
+        except Exception:
+            pass
+
+    def _on_power_state_change(self, ch: str, is_on: bool):
+        """
+        [수정1] 전원 ON/OFF 발생 즉시 호출 (이벤트 기반).
+        조건 감시 토글이 ON일 때만 평가.
+        """
+        if not self._cond_watch_enabled:
+            return
+        curr  = {c: self._power_ctrl.is_on(c) for c, _ in self._CHANNELS}
+        # 방금 바뀐 채널만 changed=True
+        changed = {c: (c == ch) for c, _ in self._CHANNELS}
+
+        if not self._running:
+            if self._eval_cond(curr, changed,
+                               self._start_chks,
+                               self._start_on_rbs,
+                               self._start_and_rb.isChecked()):
+                self._start(self._make_reason(curr,
+                                              self._start_chks,
+                                              self._start_on_rbs))
+        if self._running:
+            if self._eval_cond(curr, changed,
+                               self._stop_chks,
+                               self._stop_on_rbs,
+                               self._stop_and_rb.isChecked()):
+                self._stop(self._make_reason(curr,
+                                             self._stop_chks,
+                                             self._stop_on_rbs))
+
+    # ── UI 빌드 ────────────────────────────────────────────────────────────
+    def _build(self):
+        v = QVBoxLayout(self); v.setContentsMargins(0, 0, 0, 4); v.setSpacing(8)
+
+        # ── 타이머 표시 ───────────────────────────────────────────────────
+        disp_grp = QGroupBox("⏱ 경과 시간")
+        dl = QVBoxLayout(disp_grp); dl.setSpacing(4)
+        self._disp_lbl = QLabel("00:00:00.000")
+        self._disp_lbl.setAlignment(Qt.AlignCenter)
+        self._disp_lbl.setStyleSheet(
+            "color:#1abc9c;font-size:28px;font-weight:bold;"
+            "font-family:Consolas,monospace;letter-spacing:2px;")
+        dl.addWidget(self._disp_lbl)
+        v.addWidget(disp_grp)
+
+        # ── [수정1] 조건 감시 ON/OFF 토글 ────────────────────────────────
+        # OFF 상태에서는 전원 이벤트를 수신해도 타이머 조건 평가 안 함
+        # → CPU/SW 자원 절약
+        watch_row = QHBoxLayout()
+        self._watch_toggle = QPushButton("📡 전원 조건 감시: OFF")
+        self._watch_toggle.setCheckable(True)
+        self._watch_toggle.setChecked(False)
+        self._watch_toggle.setMinimumHeight(30)
+        self._watch_toggle.setToolTip(
+            "ON: 전원 ON/OFF 이벤트 발생 시 타이머 자동 시작/종료\n"
+            "OFF: 전원 이벤트 무시 (수동 버튼만 동작)\n"
+            "※ 이벤트 기반(콜백)으로 동작 — 추가 CPU 부담 없음")
+        self._watch_toggle.setStyleSheet(
+            "QPushButton{background:#0a1a2a;color:#556;"
+            "border:1px solid #1a2a3a;border-radius:5px;"
+            "font-size:11px;font-weight:bold;}"
+            "QPushButton:checked{background:#0a2a1a;color:#1abc9c;"
+            "border-color:#1a6a4a;}"
+            "QPushButton:hover{background:#0d1a2a;}")
+        self._watch_toggle.toggled.connect(self._on_watch_toggled)
+        watch_row.addWidget(self._watch_toggle)
+        v.addLayout(watch_row)
+
+        # ── 시작 조건 ─────────────────────────────────────────────────────
+        start_grp = QGroupBox("▶ 시작 조건")
+        sl = QVBoxLayout(start_grp); sl.setSpacing(4)
+        self._start_chks, self._start_on_rbs, self._start_off_rbs = {}, {}, {}
+        self._start_cond_grps = {}
+        for ch, label in self._CHANNELS:
+            row = QHBoxLayout(); row.setSpacing(6)
+            chk = QCheckBox(label); chk.setFixedWidth(100)
+            chk.setStyleSheet("font-size:11px;color:#ccd;")
+            on_rb  = QRadioButton("ON");  on_rb.setStyleSheet("font-size:10px;")
+            off_rb = QRadioButton("OFF"); off_rb.setStyleSheet("font-size:10px;")
+            on_rb.setChecked(True)
+            bg = QButtonGroup(self); bg.addButton(on_rb); bg.addButton(off_rb)
+            row.addWidget(chk); row.addWidget(on_rb); row.addWidget(off_rb)
+            row.addStretch()
+            self._start_chks[ch]     = chk
+            self._start_on_rbs[ch]   = on_rb
+            self._start_off_rbs[ch]  = off_rb
+            self._start_cond_grps[ch] = bg
+            sl.addLayout(row)
+
+        # AND / OR 선택
+        logic_row = QHBoxLayout(); logic_row.setSpacing(12)
+        logic_row.addWidget(QLabel("조건 결합:"))
+        self._start_and_rb = QRadioButton("AND (전부 충족)")
+        self._start_or_rb  = QRadioButton("OR (하나 이상)")
+        self._start_and_rb.setChecked(True)
+        self._start_and_rb.setStyleSheet("font-size:11px;color:#f0c040;")
+        self._start_or_rb.setStyleSheet("font-size:11px;color:#f0c040;")
+        lg = QButtonGroup(self)
+        lg.addButton(self._start_and_rb); lg.addButton(self._start_or_rb)
+        logic_row.addWidget(self._start_and_rb); logic_row.addWidget(self._start_or_rb)
+        logic_row.addStretch()
+        sl.addLayout(logic_row)
+        v.addWidget(start_grp)
+
+        # ── 종료 조건 ─────────────────────────────────────────────────────
+        stop_grp = QGroupBox("⏹ 종료 조건")
+        epl = QVBoxLayout(stop_grp); epl.setSpacing(4)
+        self._stop_chks, self._stop_on_rbs, self._stop_off_rbs = {}, {}, {}
+        self._stop_cond_grps = {}
+        for ch, label in self._CHANNELS:
+            row = QHBoxLayout(); row.setSpacing(6)
+            chk = QCheckBox(label); chk.setFixedWidth(100)
+            chk.setStyleSheet("font-size:11px;color:#ccd;")
+            on_rb  = QRadioButton("ON");  on_rb.setStyleSheet("font-size:10px;")
+            off_rb = QRadioButton("OFF"); off_rb.setStyleSheet("font-size:10px;")
+            off_rb.setChecked(True)
+            bg = QButtonGroup(self); bg.addButton(on_rb); bg.addButton(off_rb)
+            row.addWidget(chk); row.addWidget(on_rb); row.addWidget(off_rb)
+            row.addStretch()
+            self._stop_chks[ch]     = chk
+            self._stop_on_rbs[ch]   = on_rb
+            self._stop_off_rbs[ch]  = off_rb
+            self._stop_cond_grps[ch] = bg
+            epl.addLayout(row)
+
+        # AND / OR 선택
+        slogic_row = QHBoxLayout(); slogic_row.setSpacing(12)
+        slogic_row.addWidget(QLabel("조건 결합:"))
+        self._stop_and_rb = QRadioButton("AND (전부 충족)")
+        self._stop_or_rb  = QRadioButton("OR (하나 이상)")
+        self._stop_or_rb.setChecked(True)
+        self._stop_and_rb.setStyleSheet("font-size:11px;color:#f0c040;")
+        self._stop_or_rb.setStyleSheet("font-size:11px;color:#f0c040;")
+        slg = QButtonGroup(self)
+        slg.addButton(self._stop_and_rb); slg.addButton(self._stop_or_rb)
+        slogic_row.addWidget(self._stop_and_rb); slogic_row.addWidget(self._stop_or_rb)
+        slogic_row.addStretch()
+        epl.addLayout(slogic_row)
+        v.addWidget(stop_grp)
+
+        # ── 수동 버튼 ─────────────────────────────────────────────────────
+        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
+        self._manual_start_btn = QPushButton("▶ 수동 시작")
+        self._manual_start_btn.setMinimumHeight(34)
+        self._manual_start_btn.setStyleSheet(
+            "QPushButton{background:#0a3a2a;color:#1abc9c;"
+            "border:1px solid #1a6a4a;border-radius:5px;"
+            "font-size:12px;font-weight:bold;}"
+            "QPushButton:hover{background:#0d4a38;}")
+        self._manual_start_btn.clicked.connect(self._manual_start)
+
+        self._manual_stop_btn = QPushButton("⏹ 수동 종료")
+        self._manual_stop_btn.setMinimumHeight(34)
+        self._manual_stop_btn.setEnabled(False)
+        self._manual_stop_btn.setStyleSheet(
+            "QPushButton{background:#3a1a0a;color:#e67e22;"
+            "border:1px solid #6a3a1a;border-radius:5px;"
+            "font-size:12px;font-weight:bold;}"
+            "QPushButton:hover{background:#4a2a0d;}"
+            "QPushButton:disabled{background:#1a1a2a;color:#556;border-color:#2a2a3a;}")
+        self._manual_stop_btn.clicked.connect(self._manual_stop)
+
+        lap_btn = QPushButton("🏁 랩 기록")
+        lap_btn.setMinimumHeight(34)
+        lap_btn.setStyleSheet(
+            "QPushButton{background:#1a1a3a;color:#9b59b6;"
+            "border:1px solid #4a3a6a;border-radius:5px;"
+            "font-size:11px;}"
+            "QPushButton:hover{background:#22224a;}")
+        lap_btn.clicked.connect(self._record_lap)
+
+        reset_btn = QPushButton("↺ 리셋")
+        reset_btn.setMinimumHeight(34)
+        reset_btn.setStyleSheet(
+            "QPushButton{background:#1a1a2a;color:#888;"
+            "border:1px solid #2a2a3a;border-radius:5px;font-size:11px;}"
+            "QPushButton:hover{background:#22222a;}")
+        reset_btn.clicked.connect(self._reset)
+
+        btn_row.addWidget(self._manual_start_btn)
+        btn_row.addWidget(self._manual_stop_btn)
+        btn_row.addWidget(lap_btn)
+        btn_row.addWidget(reset_btn)
+        v.addLayout(btn_row)
+
+        # ── 랩 기록 표시 ─────────────────────────────────────────────────
+        lap_grp = QGroupBox("🏁 랩 기록")
+        lapl = QVBoxLayout(lap_grp)
+        self._lap_txt = QPlainTextEdit()
+        self._lap_txt.setReadOnly(True)
+        self._lap_txt.setFixedHeight(80)
+        self._lap_txt.setStyleSheet(
+            "QPlainTextEdit{background:#030308;color:#7bc8e0;"
+            "font-family:Consolas,monospace;font-size:10px;"
+            "border:1px solid #0a1a2a;}")
+        lapl.addWidget(self._lap_txt)
+        v.addWidget(lap_grp)
+
+    # ── 타이머 제어 ────────────────────────────────────────────────────────
+    def _start(self, reason: str = "수동"):
+        if self._running:
+            return
+        import time as _t
+        self._running  = True
+        self._start_ts = _t.time() - self._elapsed
+        self._manual_start_btn.setEnabled(False)
+        self._manual_stop_btn.setEnabled(True)
+        self._signals.status_message.emit(f"[타이머] ▶ 시작 — 조건: {reason}")
+
+    def _stop(self, reason: str = "수동"):
+        if not self._running:
+            return
+        import time as _t
+        self._elapsed = _t.time() - self._start_ts
+        self._running = False
+        self._manual_start_btn.setEnabled(True)
+        self._manual_stop_btn.setEnabled(False)
+        self._signals.status_message.emit(
+            f"[타이머] ⏹ 종료 — 조건: {reason}  경과: {self._fmt(self._elapsed)}")
+
+    def _manual_start(self): self._start("수동 버튼")
+    def _manual_stop(self):  self._stop("수동 버튼")
+
+    def _reset(self):
+        self._stop("리셋")
+        self._elapsed = 0.0
+        self._laps.clear()
+        self._disp_lbl.setText("00:00:00.000")
+        self._lap_txt.clear()
+
+    def _record_lap(self):
+        if not self._running:
+            return
+        import time as _t
+        lap_t = _t.time() - self._start_ts
+        desc  = f"랩 {len(self._laps)+1}"
+        self._laps.append((lap_t, desc))
+        self._lap_txt.appendPlainText(f"{desc}: {self._fmt(lap_t)}")
+
+    @staticmethod
+    def _fmt(secs: float) -> str:
+        s   = int(secs)
+        ms  = int((secs - s) * 1000)
+        hh  = s // 3600
+        mm  = (s % 3600) // 60
+        ss  = s % 60
+        return f"{hh:02d}:{mm:02d}:{ss:02d}.{ms:03d}"
+
+    # ── 경과 시간 표시 갱신 (100ms) ─────────────────────────────────────
+    def _poll(self):
+        """하위 호환용 — _update_display 호출."""
+        self._update_display()
+
+    def _on_watch_toggled(self, on: bool):
+        """[수정1] 전원 조건 감시 ON/OFF."""
+        self._cond_watch_enabled = on
+        self._watch_toggle.setText(
+            f"📡 전원 조건 감시: {'ON ✅' if on else 'OFF'}")
+
+    def _update_display(self):
+        """100ms — 경과 시간 표시 + engine 캐시 업데이트."""
+        import time as _t
+        if self._running:
+            elapsed = _t.time() - self._start_ts
+            self._disp_lbl.setText(self._fmt(elapsed))
+        else:
+            elapsed = self._elapsed
+        try:
+            self._engine._timer_state_cache = {
+                "running":     self._running,
+                "elapsed":     elapsed,
+                "elapsed_str": self._fmt(elapsed),
+                "lap_count":   len(self._laps),
+            }
+        except Exception:
+            pass
+
+    def _eval_cond(self, curr: dict, changed: dict,
+                   chks: dict, on_rbs: dict, use_and: bool) -> bool:
+        """
+        체크된 채널들에 대해 AND/OR 조건 평가.
+
+        [문제2 수정] AND 모드 버그:
+        전원 채널은 하나씩 순차 ON 됨 → 콜백도 채널 하나씩 호출됨.
+        기존 코드는 AND 모드에서 모든 채널이 '동시에' changed여야 했으나
+        실제로는 불가능 → 항상 False.
+
+        수정: AND 모드에서는
+          "체크된 모든 채널이 원하는 상태(curr)에 있고,
+           이번 이벤트로 인해 그 조건이 '방금 완성'됐을 때" 트리거.
+          즉, 방금 변경된 채널이 포함된 채널 중 하나라도 있으면서
+          나머지 체크 채널들도 이미 원하는 상태이면 OK.
+
+        OR 모드: 기존 방식 유지 (하나라도 방금 전환 + 목표 상태 일치).
+        """
+        checked = [(ch, on_rbs[ch].isChecked())
+                   for ch, _ in self._CHANNELS if chks[ch].isChecked()]
+        if not checked:
+            return False
+
+        if use_and:
+            # AND: 체크된 모든 채널이 목표 상태에 있고,
+            #      이번 이벤트(changed)가 그 중 하나 이상을 담당
+            all_satisfied = all(curr.get(ch, False) == want_on
+                                for ch, want_on in checked)
+            any_just_changed = any(changed.get(ch, False)
+                                   for ch, _ in checked)
+            return all_satisfied and any_just_changed
+        else:
+            # OR: 체크된 채널 중 하나라도 방금 전환 + 목표 상태 일치
+            return any(changed.get(ch, False) and curr.get(ch, False) == want_on
+                       for ch, want_on in checked)
+
+    def _make_reason(self, curr: dict, chks: dict, on_rbs: dict) -> str:
+        parts = []
+        for ch, label in self._CHANNELS:
+            if chks[ch].isChecked():
+                state = "ON" if curr.get(ch) else "OFF"
+                parts.append(f"{label}={state}")
+        return ", ".join(parts) if parts else "자동"
 
 
 class ResetPanel(QWidget):
@@ -12625,15 +14477,6 @@ class ResetPanel(QWidget):
             ("🔴 전체 설정 초기화",
              "모든 설정(DB)을 초기화합니다. ROI, 메모, 매크로, 경로 설정 포함.",
              self._reset_all, "#3a1a1a", "#e74c3c"),
-            ("🟠 ROI 목록만 초기화",
-             "Screen/Camera ROI 목록을 모두 삭제합니다.",
-             self._reset_roi, "#2a1a0a", "#e67e22"),
-            ("🟡 블랙아웃 카운터 초기화",
-             "Screen/Camera 블랙아웃 감지 횟수와 이벤트 로그를 초기화합니다.",
-             self._reset_bo,  "#2a2a0a", "#f0c040"),
-            ("🔵 오토클릭 카운터 초기화",
-             "오토클릭 횟수 카운터를 0으로 리셋합니다.",
-             self._reset_ac,  "#0a1a2a", "#3498db"),
             ("⚪ IO채널 DB 초기화",
              "AI/MCP 외부제어 I/O 채널 DB (commands/state/events)를 초기화합니다.",
              self._reset_io,  "#1a1a2a", "#888"),
@@ -13045,6 +14888,7 @@ _SECTION_DEFS = [
     ("manual",   "🎬 수동녹화",    "#e67e22"),
     ("blackout", "⚡ 블랙아웃",    "#e74c3c"),
     ("roi",      "📐 ROI 관리",    "#9b59b6"),
+    ("timer",    "⏱ 타이머",       "#1abc9c"),   # [추가1] 타이머
     ("ac",       "🖱 오토클릭",    "#2980b9"),
     ("power",    "⚡ 전원 제어",   "#e74c3c"),
     ("macro",    "⚙ 매크로",       "#16a085"),
@@ -13060,7 +14904,7 @@ _SECTION_DEFS = [
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Screen & Camera Recorder  v4.4")
+        self.setWindowTitle("Screen & Camera Recorder  v5.2")
         self.resize(1400, 900)
         self.setStyleSheet(_DARK_QSS)
 
@@ -13098,6 +14942,18 @@ class MainWindow(QMainWindow):
 
         # ── 엔진 시작 ─────────────────────────────────────────────────────
         self._engine.start()
+
+        # [추가1] 타이머 패널에 PowerController 후 주입 (패널 빌드 이후에만 가능)
+        if hasattr(self, '_timer_panel') and self._timer_panel is not None:
+            self._timer_panel.set_power(self._power_ctrl)
+
+        # ★ [신규] OHCL 트리거 콜백 등록 — A1 스위치 단타/장누름 → 수동녹화/타임랩스
+        self._power_ctrl.register_state_callback(self._on_ohcl_trigger)
+
+        # [절대조건 12] 프로그램 시작 시 AI 자기 파악 파일 생성/읽기
+        threading.Thread(
+            target=self._init_ai_self_knowledge,
+            daemon=True, name="AISelfKnowledge").start()
 
     # ── UI 빌드 ──────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -13545,6 +15401,12 @@ class MainWindow(QMainWindow):
 
         elif key == "ac":
             return AutoClickPanel(e, s)
+        elif key == "timer":
+            # [추가1] 타이머 패널 — PowerController는 나중에 주입
+            self._timer_panel = TimerPanel(e, s, power_ctrl=getattr(self, '_power_ctrl', None))
+            # AI가 타이머를 직접 제어할 수 있도록 engine에 참조 등록
+            e._timer_panel_ref = self._timer_panel
+            return self._timer_panel
         elif key == "macro":
             self._macro_panel = MacroPanel(e, s); return self._macro_panel
         elif key == "schedule":
@@ -13557,7 +15419,7 @@ class MainWindow(QMainWindow):
         elif key == "log":
             return LogPanel(s)
         elif key == "power":
-            return PowerControlPanel(self._power_ctrl)
+            return PowerControlPanel(self._power_ctrl, db=self._db)
         elif key == "reset":
             return ResetPanel(e, db, s)
         elif key == "kernel":
@@ -14160,6 +16022,13 @@ class MainWindow(QMainWindow):
                 self._io_lbl.setStyleSheet("color:#446;font-size:9px;font-family:monospace;")
             except: pass
 
+        # [절대조건 12] 60초마다 ai_knowledge.json 갱신 (상태 변경 반영)
+        self._slow_tick_count = getattr(self, '_slow_tick_count', 0) + 1
+        if self._slow_tick_count % 60 == 0:  # 1초×60 = 60초마다
+            threading.Thread(
+                target=self._init_ai_self_knowledge,
+                daemon=True, name="AISelfKnowledgeRefresh").start()
+
     def _sched_tick(self):
         actions = self._engine.schedule_tick()
         for act, entry in actions:
@@ -14449,6 +16318,149 @@ class MainWindow(QMainWindow):
         """패널에서 설정 변경 시 호출 — 1초 후 DB 자동저장."""
         if hasattr(self, '_global_autosave_timer'):
             self._global_autosave_timer.start()
+
+    # ── [신규] OHCL 트리거 콜백 — A1 스위치 단타/장누름 처리 ──────────────
+    def _on_ohcl_trigger(self, ch: str, is_on: bool):
+        """
+        PowerController 콜백.
+        ch == "ohcl_manual"    → 수동녹화 트리거 (A1 단타 < 1.3s)
+        ch == "ohcl_timelapse" → 타임랩스 트리거 (A1 장누름 ≥ 1.3s)
+        UI 스레드 안전: QMetaObject.invokeMethod 경유.
+        """
+        if not is_on:
+            return
+        if ch == "ohcl_manual":
+            # 수동녹화 — CoreEngine.save_manual_clip() 호출 (스레드 안전)
+            from PyQt5.QtCore import QMetaObject, Qt
+            QMetaObject.invokeMethod(
+                self, "_ohcl_do_manual_clip", Qt.QueuedConnection)
+        elif ch == "ohcl_timelapse":
+            from PyQt5.QtCore import QMetaObject, Qt
+            QMetaObject.invokeMethod(
+                self, "_ohcl_do_timelapse", Qt.QueuedConnection)
+
+    def _ohcl_do_manual_clip(self):
+        """OHCL 단타 → 수동녹화 실행 (UI 스레드)."""
+        try:
+            ok = self._engine.save_manual_clip()
+            msg = "[OHCL] 수동녹화 트리거 — " + ("✅ 저장 시작" if ok else "⚠ 실패(버퍼없음/진행중)")
+            self._power_ctrl._log(msg)
+        except Exception as ex:
+            self._power_ctrl._log(f"[OHCL] 수동녹화 오류: {ex}")
+
+    def _ohcl_do_timelapse(self):
+        """OHCL 장누름 → 타임랩스 트리거 (UI 스레드)."""
+        try:
+            # 타임랩스 기능이 있으면 호출, 없으면 로그만
+            if hasattr(self._engine, 'start_timelapse'):
+                self._engine.start_timelapse()
+                self._power_ctrl._log("[OHCL] 타임랩스 트리거 — ✅ 시작")
+            else:
+                self._power_ctrl._log("[OHCL] 타임랩스 트리거 수신 (엔진 미구현 — 향후 연동)")
+        except Exception as ex:
+            self._power_ctrl._log(f"[OHCL] 타임랩스 오류: {ex}")
+
+    # ── [절대조건 12] AI 자기 파악 파일 생성/읽기 ────────────────────────
+    def _init_ai_self_knowledge(self):
+        """
+        프로그램 시작 시 AI 자기 인식 파일(ai_knowledge.json)을 기본 경로에 생성.
+        파일이 이미 있으면 읽어서 user_notes를 AI 시스템 컨텍스트에 반영.
+
+        [개선] AI가 실제로 보는 동적 프롬프트 스냅샷도 ai_knowledge.json 에 기록.
+        → 사용자가 "AI가 뭘 보고 이해하는지" 직접 확인 가능.
+        """
+        import time as _t
+        _t.sleep(2.0)  # 엔진/ROI 완전 초기화 후 실행
+
+        knowledge_path = os.path.join(BASE_DIR, "ai_knowledge.json")
+        os.makedirs(BASE_DIR, exist_ok=True)
+
+        default_knowledge = {
+            "_description": (
+                "Screen & Camera Recorder AI 자기 파악 파일 (자동 생성)\n"
+                "※ AI가 실제로 보는 정보는 'ai_sees_this_prompt' 섹션을 확인하세요.\n"
+                "※ 'user_notes'에 추가 교육 내용을 작성 후 저장 → 재실행 시 AI가 반영합니다."
+            ),
+            "_generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "program_purpose": (
+                "차량 카메라/디스플레이 화면을 녹화하고 OCR로 신호값을 감시하며 "
+                "CAN 신호와 연동하여 자동화 T/C 검증을 수행하는 영상 녹화·분석 프로그램."
+            ),
+            "how_ai_works": {
+                "step1": "사용자 입력 → AIChatController._process() 호출",
+                "step2": "_build_sys_prompt()로 실시간 상태 반영 시스템 프롬프트 생성",
+                "step3": "Groq/Gemini/Claude API에 system= 으로 전달",
+                "step4": "LLM이 JSON 액션 반환 → _execute()가 실제 함수 호출",
+                "key_insight": (
+                    "_SYS_STATIC(고정 API 명세) + 실시간 ROI목록 + 설정값 + "
+                    "CAN신호목록 + 전원상태 + user_notes = 실제 AI 지식"
+                ),
+            },
+            "ai_sees_this_prompt": "(프로그램 실행 후 자동 갱신됨)",
+            "user_notes": (
+                "※ 이 섹션에 AI에게 가르치고 싶은 내용을 자유롭게 작성하세요.\n"
+                "예: 특정 CAN 신호 의미, 차량 동작 조건, 커스텀 T/C 시나리오 등\n"
+                "저장 후 프로그램 재실행 시 AI가 이 내용을 시스템 프롬프트에 반영합니다."
+            ),
+        }
+
+        # 기존 파일의 user_notes 보존
+        user_extra = ""
+        if os.path.isfile(knowledge_path):
+            try:
+                with open(knowledge_path, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+                saved_notes = existing.get("user_notes", "")
+                if saved_notes and "※ 이 섹션에" not in saved_notes:
+                    user_extra = saved_notes
+                    default_knowledge["user_notes"] = saved_notes
+                    self._signals.status_message.emit(
+                        f"[AI] 사용자 교육 내용 로드 완료 ({len(saved_notes)}자)")
+                else:
+                    # 기존 user_notes가 기본값이면 그대로 유지
+                    default_knowledge["user_notes"] = saved_notes or default_knowledge["user_notes"]
+            except Exception:
+                pass
+
+        # AI가 실제로 보는 동적 프롬프트 스냅샷 생성
+        # → AIChatController가 LLM Chat dialog에 있으면 거기서 생성
+        dynamic_prompt_snapshot = "(AI Chat 연결 후 갱신됩니다)"
+        try:
+            # LLMChatDialog가 열려있으면 실제 프롬프트 생성
+            from PyQt5.QtWidgets import QApplication as _QApp
+            for widget in _QApp.topLevelWidgets():
+                if hasattr(widget, '_ctrl') and hasattr(widget._ctrl, '_build_sys_prompt'):
+                    dynamic_prompt_snapshot = widget._ctrl._build_sys_prompt()
+                    break
+        except Exception:
+            pass
+
+        default_knowledge["ai_sees_this_prompt"] = dynamic_prompt_snapshot
+        default_knowledge["_generated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 파일 저장
+        try:
+            with open(knowledge_path, 'w', encoding='utf-8') as f:
+                json.dump(default_knowledge, f, ensure_ascii=False, indent=2)
+            self._signals.status_message.emit(
+                f"[AI] 자기 파악 파일 갱신: {knowledge_path}")
+        except Exception as ex:
+            self._signals.status_message.emit(f"[AI] 파일 생성 실패: {ex}")
+
+        # user_notes를 AI Chat 컨트롤러 히스토리에 주입
+        if user_extra:
+            try:
+                from PyQt5.QtWidgets import QApplication as _QApp2
+                for widget in _QApp2.topLevelWidgets():
+                    if hasattr(widget, '_ctrl') and hasattr(widget._ctrl, '_lock'):
+                        with widget._ctrl._lock:
+                            widget._ctrl._history.insert(0, {
+                                "role": "model",
+                                "parts": [f"[사용자 교육 데이터]\n{user_extra[:800]}"]
+                            })
+                        break
+            except Exception:
+                pass
 
     def closeEvent(self, e):
         # 종료 시 즉시 저장 (타이머 대기 없이)
