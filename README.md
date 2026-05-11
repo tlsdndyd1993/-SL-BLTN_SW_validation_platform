@@ -45,7 +45,18 @@
 -
 
 -
+-
+**[수정 및 추가 반영 필요 내용]**
+-
+1. sshftp
+2. 전압 제어
+3. CAN 인가
+4. ETH (DoIP, SOME/IP)
+5. TP 인터럽트
+6. 시리얼 로깅 (UART)
 
+-
+-
 **[기능]**
 -
 [Kernel API Reference]
