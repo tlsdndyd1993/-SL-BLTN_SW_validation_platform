@@ -13350,9 +13350,11 @@ class PowerController:
         self._state_change_cbs: list = []
         self._rx_thread  = None
         self._rx_running = False
-        # [문제1/4 수정] TX 큐 — _rx_loop에서 send()를 직접 호출하지 않고 여기에 쌓음
-        # deque는 스레드 간 popleft/append가 GIL로 원자적 보장됨
+        # TX 큐 — _rx_loop에서 send()를 직접 호출하지 않고 여기에 쌓음
         self._tx_queue: "deque" = deque(maxlen=32)
+        # [스레드 안전] 로그 큐 — _rx_loop(백그라운드 스레드)가 쌓고
+        # UI 스레드(_poll_rx 타이머)가 꺼내서 표시. UI 직접 접근 금지.
+        self._log_queue: "deque" = deque(maxlen=200)
 
     def register_state_callback(self, cb):
         if cb not in self._state_change_cbs:
@@ -13592,13 +13594,14 @@ class PowerController:
         return ""
 
     def _log(self, msg: str):
-        if self._log_cb:
-            try: self._log_cb(msg)
-            except: pass
+        # [스레드 안전 수정] _rx_loop는 백그라운드 스레드에서 실행됨.
+        # _log_cb → _append_log → QPlainTextEdit.appendPlainText()를
+        # 백그라운드 스레드에서 직접 호출하면 PyQt5 크래시 발생.
+        # → 로그 큐(_log_queue)에만 쌓고, UI 스레드의 _poll_rx 타이머가 소비.
+        self._log_queue.append(msg)
 
     def set_log_callback(self, cb):
         self._log_cb = cb
-
 
 class PowerControlPanel(QWidget):
     _CONTROLS = [
@@ -14059,11 +14062,26 @@ class PowerControlPanel(QWidget):
             self._log_w.verticalScrollBar().maximum())
 
     def _poll_rx(self):
-        """수신 로그 박스 갱신 전용 (실제 수신은 _rx_loop 스레드가 처리).
-        [문제1 수정] read() 호출 제거 — 불필요한 시리얼 접근이 RX LED를 자극했음.
+        """UI 스레드에서 100ms마다 실행 — 로그 큐 소비 전용.
+        [스레드 안전 수정] _rx_loop(백그라운드)가 _log_queue에 쌓은 메시지를
+        여기서 꺼내 QPlainTextEdit에 표시. UI 위젯은 반드시 메인 스레드에서만 접근.
         """
-        # 로그는 _append_log 콜백으로 이미 수신 스레드에서 기록되므로 여기서 별도 처리 불필요.
-        pass
+        # _log_cb가 있을 때만 (패널이 연결된 상태) 소비
+        if not self._ctrl._log_cb:
+            return
+        msgs = []
+        q = self._ctrl._log_queue
+        while q:
+            try:
+                msgs.append(q.popleft())
+            except IndexError:
+                break
+        if msgs:
+            for m in msgs:
+                try:
+                    self._ctrl._log_cb(m)
+                except Exception:
+                    pass
 
     def closeEvent(self, e):
         super().closeEvent(e)
@@ -14136,12 +14154,18 @@ class TimerPanel(QWidget):
     def _on_power_state_change(self, ch: str, is_on: bool):
         """
         [수정1] 전원 ON/OFF 발생 즉시 호출 (이벤트 기반).
-        조건 감시 토글이 ON일 때만 평가.
+        [스레드 안전 수정] _fire_state_change는 _rx_loop 백그라운드 스레드에서 호출됨.
+        UI 위젯(isChecked 등) 접근 및 _start/_stop은 반드시 메인 스레드에서 실행해야 함.
+        QTimer.singleShot(0, ...) 으로 메인 스레드 이벤트 루프에 작업을 안전하게 위임.
         """
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, lambda: self._on_power_state_change_ui(ch, is_on))
+
+    def _on_power_state_change_ui(self, ch: str, is_on: bool):
+        """메인(UI) 스레드에서만 실행되는 실제 처리 로직."""
         if not self._cond_watch_enabled:
             return
-        curr  = {c: self._power_ctrl.is_on(c) for c, _ in self._CHANNELS}
-        # 방금 바뀐 채널만 changed=True
+        curr    = {c: self._power_ctrl.is_on(c) for c, _ in self._CHANNELS}
         changed = {c: (c == ch) for c, _ in self._CHANNELS}
 
         if not self._running:

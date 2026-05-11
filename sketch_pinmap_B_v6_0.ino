@@ -1,17 +1,20 @@
 /*
- * Screen & Camera Recorder — 전원 제어 Arduino 펌웨어 v5.0 (핀맵 B 타입)
+ * Screen & Camera Recorder — 전원 제어 Arduino 펌웨어 v6.0 (핀맵 B 타입)
  * =========================================================
- * [v5.0 수정사항]
- *   · [수정-문제1] SW<ch> 패킷이 Python에서 수신되지 않는 문제는
- *             Python 측 파서 버그(S<HEX> 조건이 SW를 선점)로 확인됨.
- *             Arduino 측은 변경 없음 — Python a_platform1_5.py에서 수정됨.
- *   · [수정-추가] A1(PC1): 택트스위치7(OHCL) — INPUT_PULLUP (Pull-up 외부 반영)
- *             A1 스위치 단단누름(<1.3s) → SW7 패킷 + 'M'(수동녹화 트리거)
- *             A1 스위치 장누름(≥1.3s)  → SW8 패킷 + 'N'(타임랩스 트리거)
- *   · [수정-추가] A2(PC2): BLTN OHCL LED PWM 출력 신호 입력
- *             → 100ms 주기로 듀티 측정 → "L1\n"/"L0\n" 전송 (기존 D8과 동일 포맷)
- *             D8(PB0) 기존 LED 입력은 A2로 대체됨 (D8은 BLTN OHCL LED OUT 유지)
- *   · v4.0의 PLBM 상호 배타, EEPROM 저장/복원, DTR 방어 유지
+ * [v6.0 수정사항]
+ *   · [근본 원인 수정] A2(PC2) 플로팅 핀 → 수동녹화 트리거 오감지 문제
+ *             원인1: A2에 아무것도 연결 안 된 상태에서 내부 풀업 미활성화
+ *                    → 플로팅 핀이 노이즈로 0/1 진동
+ *                    → LED 변화 감지 → uart_send_led + uart_send_state 연속 전송
+ *                    → Python 수신로그에 스위치/LED 이벤트 폭주 + RX LED 깜빡임
+ *             원인2: measure_led_pwm()이 100샘플×50µs = 5ms 블로킹
+ *                    → 루프 점유로 다른 처리 지연
+ *     수정1: A2(PC2) 내부 풀업 활성화 (미연결 시 안정적 HIGH 고정)
+ *     수정2: 블로킹 measure_led_pwm() 제거
+ *            → 비블로킹 led_raw_sample() 교체
+ *               매 루프(10ms)마다 1샘플, 5회(50ms) 연속 같은 값일 때만 확정
+ *               → 플로팅 노이즈로 인한 오감지 완전 차단
+ *   · v5.0의 A1(OHCL), PLBM 상호 배타, EEPROM, DTR 방어 유지
  *
  * ── 핀맵 (v5.0 핀맵 B) ──────────────────────────────────────────────────
  *  A0(PC0) | 택트스위치1  (BLTN B+)               — INPUT_PULLUP
@@ -237,15 +240,39 @@ ISR(USART_RX_vect) {
 }
 
 // ══ LED PWM 측정 (A2/PC2 입력 기반) ════════════════════════════════════════
-// A2(PC2)로 BLTN OHCL LED PWM 신호를 받아 듀티 측정.
-// 100 샘플 × 50µs = 5ms 윈도우. ON 비율 ≥50% → LED ON.
-static uint8_t measure_led_pwm(void) {
-    uint16_t hi = 0;
-    for (uint16_t i = 0; i < 100; i++) {
-        if (PINC & (1 << PIN_OHCL_LED_PWM)) hi++;
-        _delay_us(50);
+// [v6.0 수정] 블로킹 방식(100샘플 × 50µs = 5ms 점유) 제거.
+// 대신 단순 디지털 읽기 + 히스테리시스(연속 N회 확인) 방식으로 변경.
+// → 루프 블로킹 없음, 플로팅 노이즈로 인한 오감지 방지.
+//
+// 호출 방법: 10ms 루프마다 led_raw_sample()로 샘플 1회 추가.
+//            LED_CONFIRM_CNT 회 연속 같은 값이면 확정.
+#define LED_CONFIRM_CNT  5   // 50ms 연속 같은 값 → 확정
+
+static uint8_t led_sample_buf  = 0;    // 최근 샘플 비트맵 (LSB=최신)
+static uint8_t led_confirmed   = 0;    // 현재 확정된 LED 상태
+
+// 매 루프(10ms)마다 호출. 확정 변화 시 1 반환, 아니면 0.
+static uint8_t led_raw_sample(uint8_t *confirmed_out) {
+    uint8_t raw = (PINC & (1 << PIN_OHCL_LED_PWM)) ? 1 : 0;
+
+    // 최근 LED_CONFIRM_CNT 샘플을 비트 시프트로 관리
+    led_sample_buf = ((led_sample_buf << 1) | raw);
+
+    // 하위 LED_CONFIRM_CNT 비트가 모두 1 → ON 확정
+    uint8_t mask = (1 << LED_CONFIRM_CNT) - 1;
+    uint8_t all_hi = ((led_sample_buf & mask) == mask);
+    uint8_t all_lo = ((led_sample_buf & mask) == 0);
+
+    uint8_t new_state = led_confirmed;
+    if (all_hi) new_state = 1;
+    if (all_lo) new_state = 0;
+
+    if (new_state != led_confirmed) {
+        led_confirmed  = new_state;
+        *confirmed_out = new_state;
+        return 1;   // 변화 감지
     }
-    return (hi >= 50) ? 1 : 0;
+    return 0;
 }
 
 // ══ 스위치 레벨 읽기 ═════════════════════════════════════════════════════════
@@ -280,9 +307,11 @@ int main(void) {
     DDRC  &= ~(1 << PIN_OHCL_SW);
     PORTC &= ~(1 << PIN_OHCL_SW);
 
-    // ★ A2(PC2): BLTN OHCL LED PWM 신호 입력 — INPUT, 풀업 없음
+    // ★ A2(PC2): BLTN OHCL LED PWM 신호 입력
+    // [v6.0 수정] 아무것도 연결 안 됐을 때 플로팅 → 내부 풀업 활성화
+    // (실제 LED PWM 신호가 들어오면 풀업보다 강하므로 측정에 영향 없음)
     DDRC  &= ~(1 << PIN_OHCL_LED_PWM);
-    PORTC &= ~(1 << PIN_OHCL_LED_PWM);
+    PORTC |=  (1 << PIN_OHCL_LED_PWM);  // 내부 풀업 ON
 
     // SW2~SW6: D2~D6 내부 풀업 (D5=PLBM실물, D6=PLBM모사)
     DDRD  &= ~((1 << PD2) | (1 << PD3) | (1 << PD4) | (1 << PD5) | (1 << PD6));
@@ -311,7 +340,6 @@ int main(void) {
 
     uint8_t  sw_last[6]  = {1, 1, 1, 1, 1, 1};
     uint16_t loop_cnt    = 0;
-    uint8_t  last_led    = 0xFF;
 
     // ★ OHCL 스위치(A1) 상태 추적
     uint8_t  ohcl_last      = 1;    // 이전 레벨 (1=떼어짐, 0=눌림)
@@ -390,15 +418,15 @@ int main(void) {
             }
         }
 
-        // ── LED PWM 감지 (100ms마다) ─────────────────────────────────────────
-        if (loop_cnt % 10 == 0) {
-            uint8_t led_now = measure_led_pwm();
-            if (led_now != last_led) {
-                last_led = led_now;
-                g_led_on = led_now;
-                if (led_now) g_state |=  (1 << 1);
-                else         g_state &= ~(1 << 1);
-                uart_send_led(led_now);
+        // ── LED PWM 감지 (매 루프 10ms 단위 샘플링, 50ms 연속 확정) ──────────
+        {
+            uint8_t confirmed_val = 0;
+            if (led_raw_sample(&confirmed_val)) {
+                // 확정된 변화 발생
+                g_led_on = confirmed_val;
+                if (confirmed_val) g_state |=  (1 << 1);
+                else               g_state &= ~(1 << 1);
+                uart_send_led(confirmed_val);
                 g_tx_request = 1;
             }
         }
