@@ -180,7 +180,7 @@
 
 <img width="1199" height="849" alt="image" src="https://github.com/user-attachments/assets/6984a4b4-8405-43f7-92f7-43ee1c4ed0fd" />
 
--26.05.13)
+- 26.05.13)
 1. OHCL 이벤트 택트스위치 및 플랫폼 UI 추가
 2. 수동녹화/충격녹화/타임랩스 녹화에 따른 OHCL LED PWM 출력 및 점멸을 플랫폼 UI에서 확인하도록 반영
 3. PLBM 전원 제어(실물)/(모사) TRADE OFF 로 반영
