@@ -186,3 +186,7 @@
 3. PLBM 전원 제어(실물)/(모사) TRADE OFF 로 반영
 4. AI CHAT 및 API 기능 강건화 -> 모든 기능 설정 및 실행 접근 가능하도록 반영
 
+
+<img width="1839" height="800" alt="image" src="https://github.com/user-attachments/assets/0341b741-f68c-409f-a8b3-d9b2575a19d2" />
+
+
