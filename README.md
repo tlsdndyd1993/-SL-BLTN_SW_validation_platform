@@ -187,6 +187,5 @@
 4. AI CHAT 및 API 기능 강건화 -> 모든 기능 설정 및 실행 접근 가능하도록 반영
 
 
-<img width="1839" height="800" alt="image" src="https://github.com/user-attachments/assets/0341b741-f68c-409f-a8b3-d9b2575a19d2" />
-
+<img width="1837" height="828" alt="image" src="https://github.com/user-attachments/assets/eee1e0f0-b865-4fb6-aec5-9e97ccd75311" />
 
