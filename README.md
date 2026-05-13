@@ -185,6 +185,7 @@
 2. 수동녹화/충격녹화/타임랩스 녹화에 따른 OHCL LED PWM 출력 및 점멸을 플랫폼 UI에서 확인하도록 반영
 3. PLBM 전원 제어(실물)/(모사) TRADE OFF 로 반영
 4. AI CHAT 및 API 기능 강건화 -> 모든 기능 설정 및 실행 접근 가능하도록 반영
+5. 타이머 기능 개선 (조건식에 CAN 값에 따라 타이머 실행/종료/랩 기록 가능)
 
 
 <img width="1837" height="828" alt="image" src="https://github.com/user-attachments/assets/eee1e0f0-b865-4fb6-aec5-9e97ccd75311" />
