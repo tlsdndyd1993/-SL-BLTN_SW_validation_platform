@@ -176,11 +176,13 @@
   4. 전원 제어 기능 UI개선
   5. CAN Graph 기능 프로세스 병목현상 완화 (Graph 기능 축소)
   6. Atmega328p 전원제어 기능 추가(PLBM)
-  7. Atmega328p OHCL 스위치 인터페이스 추가(택트스위치 & 프로그램 UI)
-  8. Atmega328p OHCL 점멸 주기를 프로그램 UI로 확인가능하게끔 개선
       
 
 <img width="1199" height="849" alt="image" src="https://github.com/user-attachments/assets/6984a4b4-8405-43f7-92f7-43ee1c4ed0fd" />
 
-
+-26.05.13)
+1. OHCL 이벤트 택트스위치 및 플랫폼 UI 추가
+2. 수동녹화/충격녹화/타임랩스 녹화에 따른 OHCL LED PWM 출력 및 점멸을 플랫폼 UI에서 확인하도록 반영
+3. PLBM 전원 제어(실물)/(모사) TRADE OFF 로 반영
+4. AI CHAT 및 API 기능 강건화 -> 모든 기능 설정 및 실행 접근 가능하도록 반영
 
