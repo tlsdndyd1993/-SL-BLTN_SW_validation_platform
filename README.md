@@ -80,7 +80,9 @@ https://smartstore.naver.com/openhw/products/2431429917?NaPm=ct%3Dmp4r284i%7Cci%
 -
 [전원 제어]
 1. 전원 ON/OFF : BLTN B+  /  HU & CCU B+  /  ACC  /  IGN  /  PLBM(실물)  /  PLBM(모사)
+   
 2. 스위치 : OHCL 스위치 (수동녹화 / 타임랩스 인가)
+
 -> 택트스위치 및 플랫폼 UI 로 전원 및 신호 인가 가능.
 
 [녹화]
