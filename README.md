@@ -13,8 +13,8 @@
 1. PC
 2. Web CAM
 3. VECTOR CANoe 1640A
-4. 아두이노 우노 & 택트스위치 4ea & 빵판 & 전자식 릴레이 & wire & 아두이노 USB
-5. 검증 대상 제어기(BLTN) & 주변 환경(CCU / HU / Display / PLBM...)
+4. 검증 대상 제어기(BLTN) & 주변 환경(CCU / HU / Display / PLBM...)
+5. 아두이노 우노 & 택트스위치 7ea & 빵판 & 전자식 릴레이 & 10k옴/2K옴/4.7K옴 저항 & wire & 아두이노 USB
 -
 
 <img width="1533" height="1540" alt="image" src="https://github.com/user-attachments/assets/c9ff2304-e936-4342-b23e-c669fa76c24d" />
