@@ -91,8 +91,8 @@ https://smartstore.naver.com/openhw/products/2431429917?NaPm=ct%3Dmp4r284i%7Cci%
 2. 캡쳐 | 녹화 종료 후, (PASS)|(FAIL) UI창이 뜨면 결과 선택 -> 설정으로 지정한 폴더트리에 (PASS)|(FAIL) 자동 반영
 -
 [전원제어]
-1. PC 에 연결된 아두이노 포트 활성화 시킨 후, BLTN B+/ HU & CCU B+ / ACC / IGN 전원 on/off 제어
-2. (PLBM 전원 및 OHCL 인터페이스도 추가 예정)
+1. PC 에 연결된 아두이노 포트 활성화 시킨 후, BLTN B+/ HU & CCU B+ / ACC / IGN / PLBM(실물OR모사) / 전원 on/off 제어   및   OHCL 스위치 인가(BLTN 수동녹화 OR 타임랩스)
+
 -
 [CAN]
 1. (사전 조건) CAPL 실행
@@ -113,7 +113,7 @@ https://smartstore.naver.com/openhw/products/2431429917?NaPm=ct%3Dmp4r284i%7Cci%
 [BLACK OUT]
 1. 출력 화면에 있는 ROI영역 내 Brightness(pixel gradient) 가 급격히 하강하는 경우 blackout 으로 판정하여 그 시점으로부터 -20초~+20초 녹화 시작.
 -
-[매크로]
+[입/출력 장치 히스토리 기억]
 1. 클릭, 드래그, 타이핑의 히스토리를 기억하여 추후 동일한 이벤트 실행 가능
 2. 여러개의 히스토리를 저장가능하게끔 슬롯1,2,3... 반영
 -
