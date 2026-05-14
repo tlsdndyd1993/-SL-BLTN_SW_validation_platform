@@ -78,6 +78,10 @@ https://smartstore.naver.com/openhw/products/2431429917?NaPm=ct%3Dmp4r284i%7Cci%
 1. 프로그램 기능을 대화형식으로 제어.
 2. 커널 기능에 반영될 스크립트를 대화형식의 요청에 따라 자동 생성.
 -
+[전원 제어]
+1. 전원 ON/OFF : BLTN B+  /  HU & CCU B+  /  ACC  /  IGN  /  PLBM(실물)  /  PLBM(모사)
+2. 스위치 : OHCL 스위치 (수동녹화 / 타임랩스 인가)
+-> 택트스위치 및 플랫폼 UI 로 전원 및 신호 인가 가능.
 
 [녹화]
 1. Display | Web CAM 선택하여 레코딩 가능
