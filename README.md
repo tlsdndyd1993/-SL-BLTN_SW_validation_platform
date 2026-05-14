@@ -85,6 +85,10 @@ https://smartstore.naver.com/openhw/products/2431429917?NaPm=ct%3Dmp4r284i%7Cci%
 
 -> 택트스위치 및 플랫폼 UI 로 전원 및 신호 인가 가능.
 
+<img width="708" height="1316" alt="image" src="https://github.com/user-attachments/assets/4b9d9c27-42dd-4485-81fe-36b6afa97a97" />
+
+-
+
 [녹화]
 1. Display | Web CAM 선택하여 레코딩 가능
 2. Display | Web CAM 현재 화면 캡쳐 가능
