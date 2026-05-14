@@ -46,11 +46,13 @@ https://smartstore.naver.com/openhw/products/2431429917?NaPm=ct%3Dmp4r284i%7Cci%
    
    -> 커널            : 프로그램 내 기능(녹화/수동녹화/전원제어/블랙아웃/ROI 등)API의 파라메터 설정 및 실행을 스크립트 형식으로 제어.
 
+<AI Chat 에 스크립트 작성 요청>
 <img width="1813" height="1563" alt="image" src="https://github.com/user-attachments/assets/a95a5de3-5cf3-4124-a833-d96378091090" />
 
 
 
 -
+<커널 스크립트에 반영>
 <img width="1230" height="1539" alt="image" src="https://github.com/user-attachments/assets/9a6d63b3-95d0-4d80-b83c-3d5e599eb2a8" />
 
 -
