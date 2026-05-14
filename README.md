@@ -46,11 +46,15 @@ https://smartstore.naver.com/openhw/products/2431429917?NaPm=ct%3Dmp4r284i%7Cci%
    
    -> 커널            : 프로그램 내 기능(녹화/수동녹화/전원제어/블랙아웃/ROI 등)API의 파라메터 설정 및 실행을 스크립트 형식으로 제어.
 
-   <img width="1379" height="2082" alt="image" src="https://github.com/user-attachments/assets/6db01fdb-ff24-4679-abe2-b0b833eddca5" />
+<img width="1813" height="1563" alt="image" src="https://github.com/user-attachments/assets/a95a5de3-5cf3-4124-a833-d96378091090" />
+
+
+
 -
 (커널 명령에 따라 녹화중...)
 <img width="3823" height="2077" alt="image" src="https://github.com/user-attachments/assets/71d5e8c7-7087-4380-8557-9a25d5919868" />
 -
+<img width="1230" height="1539" alt="image" src="https://github.com/user-attachments/assets/9a6d63b3-95d0-4d80-b83c-3d5e599eb2a8" />
 
 -
 -
