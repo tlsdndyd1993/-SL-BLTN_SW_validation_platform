@@ -51,9 +51,6 @@ https://smartstore.naver.com/openhw/products/2431429917?NaPm=ct%3Dmp4r284i%7Cci%
 
 
 -
-(커널 명령에 따라 녹화중...)
-<img width="3823" height="2077" alt="image" src="https://github.com/user-attachments/assets/71d5e8c7-7087-4380-8557-9a25d5919868" />
--
 <img width="1230" height="1539" alt="image" src="https://github.com/user-attachments/assets/9a6d63b3-95d0-4d80-b83c-3d5e599eb2a8" />
 
 -
