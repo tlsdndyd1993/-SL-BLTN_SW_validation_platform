@@ -1,0 +1,16 @@
+﻿/*@!Encoding:65001*/
+includes
+{
+  
+}
+
+variables
+{
+  
+}
+
+on key 'a'
+{
+  
+ write("A키가 눌러졌어요."); 
+}
