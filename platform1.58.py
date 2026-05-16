@@ -35,8 +35,7 @@ v4.10 → v4.11 수정사항
 <<<<<<<< HEAD:platform1.58.py
 
 ========
-"""
->>>>>>>> f915c9bbca2b929bd07a1258a48700e29ec93785:platform1_58.py
+
 
   [문제1 수정] 아두이노 RX LED 계속 깜빡힘
     · 원인: _poll_rx()가 100ms마다 PowerController.read()를 호출하나
