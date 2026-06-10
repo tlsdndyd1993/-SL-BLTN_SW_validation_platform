@@ -1,197 +1,157 @@
-**업무 활성화용 단품 평가 환경 플랫폼 프로그램 개발** (26.03.02 ~ 현재)
+# Screen & Camera Recorder
 
--
-(첨부파일)
+**단품 평가 환경 자동화 플랫폼** — 차량용 제어기(BLTN) 검증 시 녹화·전원제어·CAN 신호 연동·AI 기반 T/C 스크립트 자동 생성을 통합한 Windows 데스크톱 도구.
 
--> 플랫폼 프로그램(=platform1.32.py)
+> 개발 기간: 2026.03.02 ~ 현재
 
--> Atmega328p아두이노 프로그램(=sketch_apr12a.ino)
+---
 
--
--
-**<프로그램 사용 예시>**
--
-https://youtu.be/LCkzGNMzZxA
--
+## 시연 영상
 
+[![YouTube](https://img.shields.io/badge/YouTube-Demo-red?logo=youtube)](https://youtu.be/LCkzGNMzZxA)
 
--
-**[환경 세팅]**
--
-1. PC
-2. Web CAM
-3. VECTOR CANoe 1640A
-4. 검증 대상 제어기(BLTN) & 주변 환경(CCU / HU / Display / PLBM...)
-5. DMM / POWER
-6. 아두이노 우노 & 택트스위치 7ea & 빵판 & 전자식 릴레이 & 10k옴/2K옴/4.7K옴 저항 & wire & 아두이노 USB
--
+---
 
+## 환경 구성
 
-**[목적]**
--
-**1. 평가 시, '녹화/수동녹화/캡쳐' 기능을 통한 증적 자료 자동 생성.**
-   
-   -> 평가 시작과 동시에 Recording, 평가 완료시 녹화 종료하여 증적 자료 바로 생성.
-   -> Display / Web CAM 출력 화면을 동시에 Recording -> CAN Graph + 실물 동작성 동시 확인하여 증적 자료 신뢰성 향상.
-   
-   <img width="1898" height="1023" alt="image" src="https://github.com/user-attachments/assets/2647d63e-1e9a-44f9-afd0-fde7892894df" />
+| 항목 | 내용 |
+|------|------|
+| PC | Windows (오프라인 배포 EXE 지원) |
+| 카메라 | USB Web CAM |
+| CAN 인터페이스 | VECTOR CANoe VN1640A |
+| 검증 대상 | BLTN 제어기 + 주변 환경 (CCU / HU / Display / PLBM …) |
+| 계측 장비 | DMM / POWER |
+| 전원 제어 HW | Arduino Uno + 택트스위치 7EA + 전자식 릴레이 + 저항 (10kΩ / 2kΩ / 4.7kΩ) + 브레드보드 + USB |
 
+---
 
-**2. PC환경에서 테스트케이스 기반 동작 천이 자동 반복 테스트 (CAN 신호 Read & 전원제어 & PASS|FAIL 자동 판별 & 녹화)**
-   
-   -> 전원 제어       : **PC** <---(UART)---> Atmega328p <--(전자식 릴레이)--> **BLTN 제어기**
+## 주요 기능
 
-   -> CAN 신호 Read   : PC <--(Vector XL driver) --> CANoe VN1640A
+### 1. 녹화 / 수동 녹화 / 캡처
 
-   -> AI Chat        : 대화 형식으로 기능들에 대한 설정값 반영 & 실행, 요청에 따라 T/C 스크립트 자동 생성. (Groq / Gemini / Claude)
-   
-   -> 커널            : 프로그램 내 기능(녹화/수동녹화/전원제어/블랙아웃/ROI 등)API의 파라메터 설정 및 실행을 스크립트 형식으로 제어.
+- Display 및 Web CAM 화면 동시 녹화 → CAN Graph + 실물 동작 동시 증적
+- 평가 시작·종료 시 자동 녹화 시작·중단
+- 수동 녹화: 원하는 시점 기준 최대 **−40초 ~ +40초** 범위 지정
+- 코덱 종류·해상도·저장 배속·FPS 조절
+- 캡처·녹화 완료 후 `PASS / FAIL` 선택 → 결과가 폴더 트리에 자동 반영
 
-<AI Chat 에 스크립트 작성 요청>
-<img width="1813" height="1563" alt="image" src="https://github.com/user-attachments/assets/a95a5de3-5cf3-4124-a833-d96378091090" />
+### 2. 전원 제어
 
+PC ↔ (UART) ↔ ATmega328p ↔ (전자식 릴레이) ↔ BLTN 제어기
 
+| 채널 | 설명 |
+|------|------|
+| BLTN B+ | 제어기 메인 전원 |
+| HU & CCU B+ | 헤드유닛 / CCU 전원 |
+| ACC / IGN | 차량 전원 라인 |
+| PLBM (실물 / 모사) | PLBM 릴레이 |
+| OHCL 스위치 | 수동녹화 / 타임랩스 트리거 |
 
--
-<커널 스크립트에 반영>
-<img width="1889" height="2035" alt="image" src="https://github.com/user-attachments/assets/7464415e-170e-47bb-95cb-4a6f941895b5" />
+택트스위치 및 플랫폼 UI 양쪽으로 제어 가능.
 
+### 3. CAN 버스
 
--
--
+- Vector XL Driver를 통해 CANoe VN1640A와 통신
+- DBC 파일 업로드 → 신호 그래프 표시 및 커널·AI Chat에서 값 READ
+- 사전 조건: CAPL 실행 필요
 
--
--
-**[기능]**
--
-[Kernel API Reference]
-1. 기능 실행 및 설정값들을 함수화 및 파라메터화 하여, 어떻게 커널 기능 내 스크립트에서 활용할 수 있을지를 정리해놓은 도큐먼트
--
+### 4. 커널 (스크립트 실행 엔진)
 
-[AI Chat]
-1. 프로그램 기능을 대화형식으로 제어.
-2. 커널 기능에 반영될 스크립트를 대화형식의 요청에 따라 자동 생성.
--
-[전원 제어]
-1. 전원 ON/OFF : BLTN B+  /  HU & CCU B+  /  ACC  /  IGN  /  PLBM(실물)  /  PLBM(모사)
-   
-2. 스위치 : OHCL 스위치 (수동녹화 / 타임랩스 인가)
+```python
+# 커널 스크립트 예시
+engine.set_manual_time(20, 30)
+engine.start_recording()
+kernel.wait(5)
+engine.save_manual_clip()
+kernel.wait_manual_clip(timeout=70)
+engine.stop_recording()
+```
 
--> 택트스위치 및 플랫폼 UI 로 전원 및 신호 인가 가능.
+- 프로그램 내 모든 기능(녹화·전원제어·블랙아웃·ROI 등)을 Python 스크립트로 제어
+- 단일 스크립트 무한 반복 / 여러 스크립트 순차 실행
+- 스크립트 Import / Export 지원
 
-<img width="708" height="1316" alt="image" src="https://github.com/user-attachments/assets/4b9d9c27-42dd-4485-81fe-36b6afa97a97" />
+### 5. AI Chat
 
--
+- Groq / Gemini / Claude API 연동
+- 대화 형식으로 기능 설정값 반영 및 실행
+- 요청에 따라 T/C 커널 스크립트 자동 생성
+- 내·외부 LLM이 플랫폼 기능을 API처럼 직접 제어 가능
 
-[녹화]
-1. Display | Web CAM 선택하여 레코딩 가능
-2. Display | Web CAM 현재 화면 캡쳐 가능
-3. 저장 배속 및 FPS 조절 가능
-4. 영상 용량 절감 목적 '코덱 종류', '해상도' 선택
--
-[수동 녹화]
-1. Display | Web CAM 선택하여 레코딩 가능
-2. 원하는 시점으로부터 최대 -40초 ~ +40초 조절하여 녹화 가능
--
-[저장 경로]
-1. 설정한 폴더트리에 자동으로 녹화/수동녹화/캡쳐 파일 저장
-2. 캡쳐 | 녹화 종료 후, (PASS)|(FAIL) UI창이 뜨면 결과 선택 -> 설정으로 지정한 폴더트리에 (PASS)|(FAIL) 자동 반영
--
-[전원제어]
-1. PC 에 연결된 아두이노 포트 활성화 시킨 후, BLTN B+/ HU & CCU B+ / ACC / IGN / PLBM(실물OR모사) / 전원 on/off 제어   및   OHCL 스위치 인가(BLTN 수동녹화 OR 타임랩스)
+> AI Chat → 스크립트 자동 생성 → 커널 실행 흐름:
+>
+> `[AI Chat 요청]` → `[커널 스크립트 생성]` → `[커널에서 프로그램 제어]`
 
--
-[CAN]
-1. (사전 조건) CAPL 실행
-2. CAPL에 사용되고 있는 DB를 이 플랫폼에 업로드 후, 그래프 및 커널, Ai chat을 통해 CAN 값 READ.
-3. CAN Graph UI 반영하여 간단한 동작 천이 확인 ( CAN signal 필터링 타이밍은 불일치함.. )
--
-[커널]
-1. 프로그램 내 기능들의 설정 및 실행을 스크립트 함수(Python 형식)로 실행 가능하게끔 함.
-2. 하나의 스크립트를 최대 무한 번 반복 가능
-3. 여러 개의 스크립트를 순차적으로 실행 가능
-4. 스크립트 import/export 가능
--
-[ROI 관리]
-1. Web CAM 및 Display 출력 화면에 ROI 영역 각각 최대 10EA 반영 가능 (ROI 별 네이밍 가능)
-2. ROI 영역 내 Brightness 값 확인 가능
-3. ROI 영역 내 HEX 값 OCR로 확인 가능
--
-[BLACK OUT]
-1. 출력 화면에 있는 ROI영역 내 Brightness(pixel gradient) 가 급격히 하강하는 경우 blackout 으로 판정하여 그 시점으로부터 -20초~+20초 녹화 시작.
--
-[입/출력 장치 히스토리 기억]
-1. 클릭, 드래그, 타이핑의 히스토리를 기억하여 추후 동일한 이벤트 실행 가능
-2. 여러개의 히스토리를 저장가능하게끔 슬롯1,2,3... 반영
--
-[예약]
-1. 녹화 시작 및 종료 시점(년/월/일/시/분/초) 을 설정하여 녹화 예약
--
-[오토클릭]
-1. PC 비활성화 방지 목적으로 클릭 이벤트 자동 반영
--
-[타이머]
-1. 전원 조건 및 CAN 신호 값 조건 을 기준으로 타이머 시작/종료/랩 기록 
--
--
--
+### 6. ROI / OCR 관리
 
-**[수정 및 추가 반영 필요 내용]**
--
-1. sshftp
-2. 전압 제어
-3. CAN 인가
-4. ETH (DoIP, SOME/IP)
-5. TP 인터럽트
-6. 시리얼 로깅 (UART)
+- Display·Web CAM 각각 최대 **10개** ROI 영역 설정 (ROI별 네이밍)
+- ROI 내 **Brightness** 실시간 모니터링
+- ROI 내 **HEX 값** OCR 인식
 
+### 7. 블랙아웃 감지
 
+ROI 영역 내 Brightness가 급격히 하강하면 블랙아웃으로 판정 → 해당 시점 기준 **−20초 ~ +20초** 자동 녹화
 
+### 8. 조건부 타이머
 
+전원 채널 상태 또는 CAN 신호 값 조건을 기준으로 타이머 시작 / 종료 / 랩 기록
 
-**[참고]**
--
--
--
-(참고)
+### 9. 저장 경로
 
--> 프로그램 내 AI 및 추가 기능들을 API로 활용하도록 반영 O
+설정한 폴더 트리(`차종 / 날짜 / TC-ID / 추가 세그먼트`)에 녹화·수동녹화·캡처 파일 자동 저장
 
-   ㄴ 내/외부 통신 가능(외부 LLM이 해당 프로그램의 기능들을 컨트롤 가능 & 프로그램 내부 AI 와 소통 가능하게끔 반영)
+### 10. 기타 기능
 
--
-(개선 및 추가 필요)
+| 기능 | 설명 |
+|------|------|
+| 오토클릭 | PC 비활성화 방지용 자동 클릭 이벤트 |
+| 입/출력 장치 히스토리 | 클릭·드래그·타이핑 이력 저장 및 재실행 (슬롯 다수) |
+| 예약 | 녹화 시작·종료 시점(년/월/일/시/분/초) 예약 설정 |
+| 메모 오버레이 | 메모 내용을 녹화 영상에 직접 오버레이 |
 
--> 전압 제어 (0~20V)
+---
 
--> CAN 입력 (구현이 어려울 시, 입출력 장치(마우스/키보드) 히스토리 제어 API 를 통해 CAPL 프로그램으로 신호 입력)
+## 아키텍처 개요
 
--> BLTN 제어기 마운트
+```
+common/ ──────────────────────────── 전역 상수·모델·시그널
+engine_swc/ ─────────────────────── CoreEngine (녹화·캡처·ROI)
+kernel_swc/ ─────────────────────── KernelEngine · PowerController
+can_swc/ ────────────────────────── CanBusManager · AIChatController
+ui_swc/ ─────────────────────────── 각 기능 패널 (16개)
+main.py ─────────────────────────── MainWindow + DI 조립
+```
 
--> 카메라 충격 인가를 위한 DC 모터 제어 기능
+---
 
--> PLBM 전원 컨트롤 추가
+## 실행 환경 / 빌드
 
--> OHCL 인터럽트 스위치 및 LED PWM -> 프로그램 내 UI에 추가
+```batch
+:: 의존성 설치
+pip install opencv-python numpy mss PyQt5 pyserial groq anthropic google-genai
 
--
+:: EXE 빌드 (PyInstaller)
+pyinstaller main.spec
+```
 
+오프라인 PC 배포 지원 — 별도 Python 설치 불필요.
 
+---
 
--
--
-**[참고 이미지 : 자동화 반복 테스트 관련 Ai chat 사용 -> 커널 스크립트 반영]**
--
+## Kernel API Reference
 
-[AI CHAT] : 요청 -> 응답
+Control Panel 최상단 `📖 API` 버튼에서 전체 함수 문서를 확인할 수 있습니다.
 
+---
 
-[커널] : 스크립트(from AI Chat) -> 커널에서 프로그램 제어
+## 로드맵
 
-
-
--
-[CAN Graph] : CAN BUS 내 시그널 참고
-<img width="1587" height="1189" alt="image" src="https://github.com/user-attachments/assets/70037f25-7cfb-4076-8bab-a53f79c70259" />
-
--
+- [ ] SSH/SFTP 연동
+- [ ] 전압 제어 (0 ~ 20V)
+- [ ] CAN 신호 인가 (TX)
+- [ ] Ethernet (DoIP, SOME/IP)
+- [ ] TP 인터럽트
+- [ ] 시리얼 로깅 (UART)
+- [ ] BLTN 제어기 마운트
+- [ ] DC 모터 제어 (카메라 충격 인가)
+- [ ] LED PWM / OHCL 인터럽트 스위치 UI 통합
