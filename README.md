@@ -71,6 +71,10 @@ engine.stop_recording()
 - 단일 스크립트 무한 반복 / 여러 스크립트 순차 실행
 - 스크립트 Import / Export 지원
 
+- 
+<img width="1559" height="2030" alt="image" src="https://github.com/user-attachments/assets/c22ccb29-5793-43a0-bb8b-bdaba179f882" />
+-
+
 ### 5. AI Chat
 
 - Groq / Gemini / Claude API 연동
