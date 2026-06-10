@@ -6,7 +6,7 @@
 
 ---
 
-## 시연 영상
+## 시연 영상 :  ccNC 디스플레이의 AR navi 영상 출력 이상 현상 자동 감지를 위한 script 자동화
 
 [![YouTube](https://img.shields.io/badge/YouTube-Demo-red?logo=youtube)](https://youtu.be/LCkzGNMzZxA)
 
