@@ -51,8 +51,9 @@ PC ↔ (UART) ↔ ATmega328p ↔ (전자식 릴레이) ↔ BLTN 제어기
 
 ### 3. CAN 버스
 
-- Vector XL Driver를 통해 CANoe VN1640A와 통신
-- DBC 파일 업로드 → 신호 그래프 표시 및 커널·AI Chat에서 값 READ
+- COM방식으로 '프로세스간 통신 / 소켓통신'을 통해 CANoe VN1640A을 사용하여 CAPL System valuable에 접근하여 통신
+- CAN Read & Write 구현 완료
+- DBC 파일 업로드 → 신호 그래프 표시 및 커널·AI Chat에서 CAN 컨트롤 제어
 - 사전 조건: CAPL 실행 필요
 
 ### 4. 커널 (스크립트 실행 엔진)
